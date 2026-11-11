@@ -3,7 +3,6 @@ package web
 
 import (
 	"embed"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -16,7 +15,7 @@ var files embed.FS
 func Asset(name string) ([]byte, error) { return files.ReadFile("vendor/" + name) }
 
 func Ready() error {
-	for _, name := range []string{"ghostty-web.js", "ghostty-vt.wasm", "mcp-app.js", "tokens.css"} {
+	for _, name := range []string{"app.js", "tokens.css", "THIRD-PARTY-NOTICES.txt"} {
 		if _, err := Asset(name); err != nil {
 			return fmt.Errorf("missing %s: run npm install and npm run build, then rebuild the Go binary", name)
 		}
@@ -24,7 +23,7 @@ func Ready() error {
 	return nil
 }
 
-func HTML(origin string) (string, error) {
+func HTML() (string, error) {
 	if err := Ready(); err != nil {
 		return "", err
 	}
@@ -36,7 +35,7 @@ func HTML(origin string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	js, err := files.ReadFile("app.js")
+	js, err := Asset("app.js")
 	if err != nil {
 		return "", err
 	}
@@ -44,7 +43,8 @@ func HTML(origin string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base, _ := json.Marshal(origin + "/assets")
-	script := strings.ReplaceAll(string(js), "__ASSET_BASE__", string(base))
+	// Inline the bundled SDK, renderer and WASM. The MCP resource must not
+	// require the host's sandboxed iframe to fetch a localhost HTTP asset.
+	script := strings.ReplaceAll(string(js), "</script", "<\\/script")
 	return strings.NewReplacer("<!--STYLE-->", "<style>"+string(tokens)+string(css)+"</style>", "<!--SCRIPT-->", "<script type=\"module\">"+script+"</script>").Replace(string(html)), nil
 }

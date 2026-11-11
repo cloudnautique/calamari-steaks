@@ -47,6 +47,8 @@ func run() error {
 	managerTimeout := flag.Duration("manager-timeout", 3*time.Minute, "Maximum time to create/reconnect a saved manager and find its primary session")
 	listen := flag.String("listen", "127.0.0.1:0", "Loopback address for terminal UI and optional HTTP MCP")
 	transport := flag.String("transport", "stdio", "MCP transport: stdio or http")
+	accessTokenFile := flag.String("access-token-file", "", "Private file containing a stable 64-character hex UI/MCP access token; omitted generates one per process")
+	requestLog := flag.Bool("request-log", false, "Log HTTP paths and MCP method timing to stderr, without credentials or request contents")
 	var allowed origins
 	flag.Var(&allowed, "ui-origin", "Exact MCP iframe origin allowed to connect to the terminal; repeat as needed")
 	flag.Parse()
@@ -152,16 +154,66 @@ func run() error {
 		return err
 	}
 	origin := "http://" + listener.Addr().String()
-	s, err := bridge.New(client, origin, allowed)
+	var accessToken string
+	if *accessTokenFile != "" {
+		data, err := os.ReadFile(*accessTokenFile)
+		if err != nil {
+			return err
+		}
+		accessToken = strings.TrimSpace(string(data))
+		if accessToken == "" {
+			return fmt.Errorf("access token file is empty")
+		}
+	}
+	s, err := bridge.New(client, origin, allowed, accessToken)
 	if err != nil {
 		return err
 	}
 	mcpServer := s.MCP()
+	if *requestLog {
+		mcpServer.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+			return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+				started := time.Now()
+				var tool string
+				switch params := req.GetParams().(type) {
+				case *mcp.CallToolParamsRaw:
+					tool = params.Name
+				case *mcp.CallToolParams:
+					tool = params.Name
+				}
+				log.Printf("MCP start method=%q tool=%q", method, tool)
+				result, err := next(ctx, method, req)
+				failed := err != nil
+				if called, ok := result.(*mcp.CallToolResult); ok && called.IsError {
+					failed = true
+				}
+				log.Printf("MCP done method=%q tool=%q duration=%s failed=%t", method, tool, time.Since(started).Round(time.Millisecond), failed)
+				return result, err
+			}
+		})
+	}
 	var mcpHTTP http.Handler
 	if *transport == "http" {
 		mcpHTTP = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, nil)
 	}
-	httpServer := &http.Server{Handler: s.Handler(mcpHTTP), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
+	var handler http.Handler = s.Handler(mcpHTTP)
+	if *requestLog {
+		inner := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			started := time.Now()
+			recorded := &responseLog{ResponseWriter: w}
+			log.Printf("HTTP start method=%q path=%q", r.Method, r.URL.EscapedPath())
+			defer func() {
+				status := recorded.status
+				if status == 0 {
+					status = http.StatusOK
+				}
+				log.Printf("HTTP done method=%q path=%q status=%d duration=%s", r.Method, r.URL.EscapedPath(), status, time.Since(started).Round(time.Millisecond))
+			}()
+			inner.ServeHTTP(recorded, r)
+		})
+	}
+	httpServer := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	serveErr := make(chan error, 1)
 	go func() {
 		err := httpServer.Serve(listener)

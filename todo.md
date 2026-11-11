@@ -50,8 +50,8 @@ reusing the same manager/exec.
 
 - [x] Finish installing and verifying the pinned `ghostty-web` and MCP Apps SDK
   dependencies; commit a lockfile after a successful install.
-- [ ] Use Ghostty's web renderer/WASM; do not require a native Ghostty app.
-- [ ] Make release builds bundle HTML, CSS, JavaScript, WASM, and dependency
+- [x] Use Ghostty's web renderer/WASM; do not require a native Ghostty app.
+- [x] Make release builds bundle HTML, CSS, JavaScript, WASM, and dependency
   notices in the Go binary. Users should not install Node, npm, or UI packages.
 - [ ] Remove the build-time dependency on the ignored `discobox/` reference
   checkout. Currently `scripts/build-ui.mjs` copies
@@ -61,6 +61,10 @@ reusing the same manager/exec.
   permit a tools-only binary and report missing assets when opening the UI.
 - [ ] Test `open_manager` in Codex and Claude for resource rendering, WASM,
   asset loading, WebSocket access, and host context updates.
+- [x] Serve a self-contained versioned MCP App resource and carry terminal
+  I/O through app-only MCP tools; canvas views need no localhost fetch or
+  WebSocket access. Verify live output and control in an opaque iframe with
+  direct network access blocked. Native Codex/Claude validation remains above.
 - [ ] Keep the standalone page as a fallback. Test reconnecting to the same
   session and reopening the view without replacing the manager.
 - [ ] Verify how each desktop host handles persistent panes. MCP cannot force

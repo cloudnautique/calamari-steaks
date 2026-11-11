@@ -3,13 +3,12 @@ package bridge
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/cloudnautique/discobox-mcp-ui/web"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const uiResource = "ui://discobox/manager.html"
+const uiResource = "ui://discobox/manager-v2.html"
 
 type empty struct{}
 type readInput struct {
@@ -33,7 +32,7 @@ func (s *Server) MCP() *mcp.Server {
 		if err := web.Ready(); err != nil {
 			return nil, nil, err
 		}
-		return &mcp.CallToolResult{Meta: mcp.Meta{"connection": s.connection()}}, map[string]any{"session": s.Client.Session, "message": "Manager terminal ready. Browser control pauses MCP writes through this integration."}, nil
+		return &mcp.CallToolResult{Meta: mcp.Meta{"connection": map[string]any{"session": s.Client.Session, "transport": "mcp"}}}, map[string]any{"session": s.Client.Session, "message": "Manager terminal resource ready. Take control in the view to type; release it to let chat drive the manager."}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "read_manager", Description: "Read the configured manager's screen without attaching or counting as activity. observedAt means cached state.", Annotations: readOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input readInput) (*mcp.CallToolResult, map[string]any, error) {
 		result, err := s.Client.Screen(ctx, input.Scrollback)
@@ -54,16 +53,17 @@ func (s *Server) MCP() *mcp.Server {
 		return nil, result, err
 	})
 	server.AddResource(&mcp.Resource{URI: uiResource, Name: "Discobox manager", MIMEType: "text/html;profile=mcp-app"}, func(_ context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		html, err := web.HTML(s.Origin)
+		html, err := web.HTML()
 		if err != nil {
 			return nil, fmt.Errorf("load terminal UI: %w", err)
 		}
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uiResource, MIMEType: "text/html;profile=mcp-app", Text: html,
 			Meta: mcp.Meta{"ui": map[string]any{"prefersBorder": true, "csp": map[string]any{
-				"connectDomains":  []string{s.Origin, strings.Replace(s.Origin, "http", "ws", 1)},
-				"resourceDomains": []string{s.Origin},
+				"connectDomains":  []string{},
+				"resourceDomains": []string{},
 			}}},
 		}}}, nil
 	})
+	s.appTools(server)
 	return server
 }

@@ -73,6 +73,37 @@ JavaScript exceptions. Terminal attaches request `replay=true` so an idle
 manager's existing screen appears immediately. Embedded desktop host rendering
 remains unverified.
 
+## MCP App canvas and diagnostics
+
+`open_manager` points to `ui://discobox/manager-v2.html`, served by MCP
+`resources/read` with MIME type `text/html;profile=mcp-app`. Its HTML contains
+the SDK, terminal renderer, WASM and styles in one response. An embedded canvas
+does not fetch scripts or WASM from the adapter's loopback HTTP listener and
+does not make a separate WebSocket connection.
+
+The canvas uses the host's MCP Apps `postMessage` bridge to call three tools
+marked with `_meta.ui.visibility = ["app"]`: `terminal_open`, `terminal_read`,
+and `terminal_action`. Terminal output is bounded, base64-encoded and read by
+cursor, with a maximum 12-second wait. Human input and resize are serialized,
+require explicit control, and block model writes through the same ownership
+lock as the standalone terminal. Closing/expiring a view detaches its stream
+without ending the manager. Idle views expire after 90 seconds, output buffers
+are bounded, and reconnect requests a fresh replay without replaying input.
+
+An opaque Chromium iframe with `connect-src 'none'` passed the SDK handshake,
+rendered the live terminal with no direct HTTP requests, and took/released
+control through MCP. Native Codex and Claude desktop canvas rendering still
+needs verification. The standalone page continues to use its HTTP/WebSocket
+connection.
+
+Enable diagnostics with `--request-log`. Stderr records HTTP method/path/status
+and MCP method/tool duration and failure state, without request bodies, query
+strings, or authentication headers. `--access-token-file PRIVATE_FILE` reads a
+64-character hexadecimal token so restarts can preserve an existing local
+UI/MCP connection. Keep this file private (`0600`). Without the flag the token
+still changes per process. Manager state and Iroh identity are separate from
+this client access token.
+
 ## Identity and enrollment
 
 Build with Go 1.27.1 or later and Node/npm. On a fresh checkout, fetch the

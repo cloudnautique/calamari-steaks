@@ -24,9 +24,11 @@ type Server struct {
 	allowedOrigins map[string]bool
 	mu             sync.Mutex
 	controller     string
+	appMu          sync.Mutex
+	appTerminals   map[string]*appTerminal
 }
 
-func New(client *discobox.Client, origin string, extraOrigins []string) (*Server, error) {
+func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string) (*Server, error) {
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "http" || u.Host == "" {
 		return nil, errors.New("invalid local UI origin")
@@ -35,7 +37,13 @@ func New(client *discobox.Client, origin string, extraOrigins []string) (*Server
 	if _, err := rand.Read(key[:]); err != nil {
 		return nil, err
 	}
-	s := &Server{Client: client, Origin: origin, token: hex.EncodeToString(key[:]), allowedOrigins: map[string]bool{origin: true}}
+	if accessToken == "" {
+		accessToken = hex.EncodeToString(key[:])
+	}
+	if decoded, err := hex.DecodeString(accessToken); err != nil || len(decoded) != 32 {
+		return nil, errors.New("access token must contain 64 hexadecimal characters")
+	}
+	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal)}
 	for _, origin := range extraOrigins {
 		if origin != "null" {
 			u, err := url.Parse(origin)
@@ -95,7 +103,7 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' "+strings.Replace(s.Origin, "http", "ws", 1)+"; img-src 'self' data:; font-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'")
-		html, err := web.HTML(s.Origin)
+		html, err := web.HTML()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return

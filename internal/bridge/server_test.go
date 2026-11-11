@@ -98,7 +98,7 @@ func testServer(t *testing.T, b *fakeBackend) (*Server, *httptest.Server) {
 		t.Fatal(err)
 	}
 	httpServer := b.network.NewUnstartedServer(nil)
-	s, err := New(c, "http://"+httpServer.Listener.Addr().String(), nil)
+	s, err := New(c, "http://"+httpServer.Listener.Addr().String(), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 5 {
+	if len(listed.Tools) != 8 {
 		t.Fatalf("tools: %d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {

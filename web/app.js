@@ -1,5 +1,6 @@
-// Replaced by the Go resource renderer with a JSON-encoded, fixed local URL.
-const assetBase = __ASSET_BASE__;
+import { App } from "@modelcontextprotocol/ext-apps";
+import { Terminal, FitAddon, Ghostty } from "ghostty-web";
+import wasmBytes from "ghostty-web/ghostty-vt.wasm";
 const byId = (id) => document.getElementById(id);
 const status = byId('status');
 const notice = byId('notice');
@@ -7,6 +8,8 @@ const control = byId('control');
 const reconnect = byId('reconnect');
 const share = byId('share');
 let app, connection, terminal, fit, socket, owned = false, connected = false;
+let appTerminal, generation = 0;
+let inputQueue = Promise.resolve();
 
 function report(error) {
   notice.textContent = error instanceof Error ? error.message : String(error);
@@ -23,6 +26,25 @@ function setControl(value) {
 }
 
 function send(message) {
+  if (app) {
+    const id = appTerminal;
+    if (!id) return;
+    const action = message.type === 'input'
+      ? { action: 'input', data: encodeBytes(new TextEncoder().encode(message.data)) }
+      : { action: message.type, cols: message.cols, rows: message.rows };
+    // Serialize terminal actions, including resize/claim/release. A failed
+    // input stops the queue; reconnecting never replays it.
+    inputQueue = inputQueue.then(async () => {
+      if (appTerminal !== id) return;
+      await appCall('terminal_action', { terminalId: id, ...action });
+      if (message.type === 'claim' || message.type === 'release') {
+        setControl(message.type === 'claim');
+        control.disabled = false;
+        if (owned) { fitOwned(); terminal.focus(); }
+      }
+    }).catch((error) => { if (appTerminal === id) disconnectApp(error); });
+    return;
+  }
   if (socket?.readyState !== WebSocket.OPEN) return;
   socket.send(JSON.stringify(message));
 }
@@ -38,6 +60,7 @@ function fitOwned() {
 
 // No automatic reconnect or input replay: a failed write may already have run.
 function attach() {
+  if (app) { attachApp().catch(disconnectApp); return; }
   if (!connection || socket && socket.readyState < WebSocket.CLOSING) return;
   notice.hidden = true;
   reconnect.disabled = true;
@@ -87,15 +110,74 @@ function attach() {
   };
 }
 
+function encodeBytes(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+async function appCall(name, args) {
+  const result = await app.callServerTool({ name, arguments: args });
+  if (result.isError) throw new Error(result.content?.find((item) => item.type === 'text')?.text || `${name} failed`);
+  return result.structuredContent || JSON.parse(result.content.find((item) => item.type === 'text').text);
+}
+function closeApp() {
+  generation++;
+  const id = appTerminal;
+  appTerminal = undefined;
+  if (id) appCall('terminal_action', { terminalId: id, action: 'close' }).catch(() => {});
+}
+function disconnectApp(error) {
+  closeApp();
+  connected = false;
+  setControl(false);
+  control.disabled = true;
+  reconnect.disabled = false;
+  status.textContent = 'Disconnected';
+  report(error);
+}
+async function attachApp() {
+  if (appTerminal) return;
+  const current = ++generation;
+  try {
+    notice.hidden = true;
+    reconnect.disabled = true;
+    control.disabled = true;
+    status.textContent = 'Connecting…';
+    const opened = await appCall('terminal_open', {});
+    if (current !== generation) {
+      await appCall('terminal_action', { terminalId: opened.terminalId, action: 'close' });
+      return;
+    }
+    appTerminal = opened.terminalId;
+    inputQueue = Promise.resolve();
+    terminal.reset();
+    if (opened.cols && opened.rows) terminal.resize(opened.cols, opened.rows);
+    connected = true;
+    setControl(false);
+    control.disabled = false;
+    status.textContent = 'Live';
+    let cursor = opened.cursor;
+    while (current === generation) {
+      const output = await appCall('terminal_read', { terminalId: opened.terminalId, after: cursor });
+      if (current !== generation) return;
+      for (const chunk of output.chunks) terminal.write(Uint8Array.from(atob(chunk), (character) => character.charCodeAt(0)));
+      cursor = output.cursor;
+      if (output.closed) throw new Error('The terminal detached. Reconnect to inspect the same manager.');
+    }
+  } catch (error) {
+    if (current === generation) disconnectApp(error);
+  }
+}
+
 async function start(value) {
   if (connection) return;
-  if (!value || value.origin !== new URL(assetBase).origin || !value.token || !value.session) {
+  if (!value?.session || (!app && (value.origin !== location.origin || !value.token))) {
     throw new Error('Missing or unexpected manager connection. Reopen the manager tool.');
   }
   connection = value;
   byId('session').textContent = `${value.session.project} / ${value.session.box} / ${value.session.exec}`;
-  const { Terminal, FitAddon, Ghostty } = await import(`${assetBase}/ghostty-web.js`);
-  const ghostty = await Ghostty.load(`${assetBase}/ghostty-vt.wasm`);
+  const { instance } = await WebAssembly.instantiate(wasmBytes, { env: { log() {} } });
+  const ghostty = new Ghostty(instance);
   const styles = getComputedStyle(byId('viewport'));
   const color = (name) => styles.getPropertyValue(name).trim();
   terminal = new Terminal({
@@ -109,7 +191,7 @@ async function start(value) {
   terminal.onData((data) => { if (owned) send({ type: 'input', data }); });
   const observer = new ResizeObserver(fitOwned);
   observer.observe(byId('viewport'));
-  const cleanup = () => { observer.disconnect(); socket?.close(); terminal.dispose(); };
+  const cleanup = () => { observer.disconnect(); socket?.close(); closeApp(); terminal.dispose(); };
   window.addEventListener('pagehide', cleanup, { once: true });
   if (app) app.onteardown = async () => { cleanup(); return {}; };
   attach();
@@ -136,12 +218,11 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    const { App } = await import(`${assetBase}/mcp-app.js`);
     app = new App({ name: 'Discobox manager', version: '0.1.0' }, {}, { autoResize: false });
     app.ontoolresult = (result) => {
       if (result._meta?.connection) start(result._meta.connection).catch(report);
     };
-    await app.connect();
+    await app.connect(undefined, { timeout: 15000 });
     share.hidden = false;
     await app.sendSizeChanged({ height: 600 });
   } else {
