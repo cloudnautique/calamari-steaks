@@ -65,19 +65,22 @@ Frontend dependency installation and actual embedded rendering remain unverified
 
 ## Add Iroh upstream transport
 
-- [ ] Reuse Discobox's endpoint transport where practical. Inspect
-  `discobox/pkg/endpoint/endpoint.go` and `iroh_transport.go`; decide whether
-  importing that package or extracting a small shared module is appropriate.
-- [ ] Support `discobox://<peer-id>` alongside the existing HTTP(S)/Unix socket
+- [x] Reuse Discobox's endpoint transport by importing `pkg/endpoint` at
+  upstream commit `d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61` (2026-11-11).
+  See `docs/connection.md` for source references and connection setup.
+- [x] Support `discobox://<peer-id>` alongside the existing HTTP(S)/Unix socket
   endpoints. Carry both normal API requests and terminal WebSocket upgrades
   through the transport.
-- [ ] Match Discobox's ALPN/protocol (`discobox/http/1`, with the certificate
+- [x] Match Discobox's ALPN/protocol (`discobox/http/1`, with the certificate
   variant where applicable); do not substitute an unrelated Iroh bridge.
-- [ ] Persist the adapter's peer identity across restarts and enroll it with
-  the target Discobox server. Confirm current peer enrollment commands against
-  the reference checkout before documenting operational steps.
-- [ ] Check the Go version, native library packaging, extraction paths, and
+- [x] Persist the adapter's peer identity across restarts, use ephemeral dialing
+  keys with enrollment certificates, and expose `--peer-id` for setup. Confirm
+  enrollment commands against upstream before documenting them.
+- [ ] Enroll an adapter with the target live server and verify its permissions.
+- [x] Check the Go version, native library packaging, extraction paths, and
   target platform requirements of the chosen Iroh dependency.
+- [x] Test API requests and terminal attach over loopback Iroh with certificate
+  identity checks, plus persistent/concurrent key creation and corrupt-key refusal.
 - [ ] Test direct connectivity, relay fallback, terminal attach, interrupted
   connections, and restart recovery across two machines.
 
@@ -137,8 +140,10 @@ go build -o bin/discobox-mcp ./cmd/discobox-mcp
 The existing Go tests, race checks, vet, and build passed during scaffolding.
 Frontend dependency fetching was blocked by DNS/network restrictions in the
 development environment; a complete UI build and live host rendering have not
-yet been validated. Remote hosting and Iroh integration are not implemented.
+yet been validated. Iroh transport is scaffolded and tested over loopback;
+two-machine and relay validation remain pending. Remote hosting is not implemented.
 
 Local client configuration examples are under `examples/`. Omitting `--box`
 reuses saved state, discovers one tagged manager, or creates one if none exists.
-Discobox must already be running and reachable.
+Discobox must already be running and reachable. Peer endpoints also need adapter
+enrollment; see `docs/connection.md`. Go builds now require Go 1.27.1 or later.

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "discobox-manager": {
+      "command": "/absolute/path/to/discobox-mcp-ui/bin/discobox-mcp",
+      "args": [
+        "--discobox", "discobox://SERVER_PEER_ID",
+        "--iroh-identity", "/absolute/durable/adapter/id_ed25519",
+        "--project", "default"
+      ]
+    }
+  }
+}

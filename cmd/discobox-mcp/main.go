@@ -32,7 +32,11 @@ func main() {
 }
 
 func run() error {
-	endpoint := flag.String("discobox", os.Getenv("DISCOBOX_MCP_ENDPOINT"), "Discobox origin or unix:///absolute/server.sock (required)")
+	endpoint := flag.String("discobox", os.Getenv("DISCOBOX_MCP_ENDPOINT"), "Discobox HTTP(S) origin, unix:///absolute/server.sock or discobox://<peer-id>")
+	identity := flag.String("iroh-identity", "", "Persistent adapter enrollment key (default: user config discobox-mcp/iroh/id_ed25519)")
+	peerID := flag.Bool("peer-id", false, "Initialize/load the adapter identity, print its public peer ID and exit")
+	var relays origins
+	flag.Var(&relays, "iroh-relay", "Custom Iroh relay URL; repeat as needed, and match the server configuration")
 	project := flag.String("project", "default", "Discobox project ID")
 	box := flag.String("box", "", "Existing manager box ID; omitted reuses saved state, discovers a tagged manager, or creates one")
 	exec := flag.String("exec", "primary", "Existing exec ID; primary is resolved and pinned at startup")
@@ -45,6 +49,23 @@ func run() error {
 	var allowed origins
 	flag.Var(&allowed, "ui-origin", "Exact MCP iframe origin allowed to connect to the terminal; repeat as needed")
 	flag.Parse()
+	if *peerID || strings.HasPrefix(*endpoint, "discobox://") {
+		if *identity == "" {
+			var err error
+			*identity, err = discobox.DefaultPeerIdentityPath()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if *peerID {
+		_, id, err := discobox.PeerIdentity(*identity)
+		if err != nil {
+			return err
+		}
+		fmt.Println(id.String())
+		return nil
+	}
 	if *endpoint == "" {
 		return fmt.Errorf("--discobox or DISCOBOX_MCP_ENDPOINT is required")
 	}
@@ -72,6 +93,15 @@ func run() error {
 	defer listener.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if strings.HasPrefix(*endpoint, "discobox://") {
+		id, err := discobox.ConfigurePeer(*endpoint, *identity, relays)
+		if err != nil {
+			return err
+		}
+		log.Printf("Adapter peer: %s (identity: %s)", id.String(), *identity)
+	} else if *identity != "" || len(relays) != 0 {
+		return fmt.Errorf("--iroh-identity and --iroh-relay require a discobox:// peer endpoint")
+	}
 	var client *discobox.Client
 	if *box == "" {
 		if *managerState == "" {

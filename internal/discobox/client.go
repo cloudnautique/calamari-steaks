@@ -9,12 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	endpointpkg "github.com/discobox-ai/discobox/pkg/endpoint"
 )
 
 type Session struct {
@@ -55,7 +56,7 @@ func newClient(endpoint, token string, session Session) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse Discobox endpoint: %w", err)
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if u.User != nil || u.ForceQuery || (u.RawQuery != "" && u.Scheme != "discobox") || u.Fragment != "" || u.Opaque != "" {
 		return nil, errors.New("endpoint must not contain credentials, a query or a fragment")
 	}
 	switch u.Scheme {
@@ -64,21 +65,28 @@ func newClient(endpoint, token string, session Session) (*Client, error) {
 			return nil, errors.New("use unix:///absolute/path/to/server.sock")
 		}
 		transport.Proxy = nil
-		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", u.Path)
-		}
-		endpoint = "http://discobox.local"
 	case "http", "https":
 		if u.Host == "" || (u.Path != "" && u.Path != "/") {
 			return nil, errors.New("HTTP endpoint must be an origin without a path")
 		}
+	case "discobox":
+		if _, err := peerEndpoint(endpoint); err != nil {
+			return nil, err
+		}
 	default:
-		return nil, errors.New("endpoint must use http, https or unix")
+		return nil, errors.New("endpoint must use http, https, unix or discobox")
 	}
-	return &Client{base: strings.TrimRight(endpoint, "/"), token: token, Session: session, http: &http.Client{
-		Transport: transport, Timeout: 75 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
-	}}, nil
+	parsed, err := endpointpkg.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	base, client, err := endpointpkg.HTTPClient(parsed, transport)
+	if err != nil {
+		return nil, err
+	}
+	client.Timeout = 75 * time.Second
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	return &Client{base: strings.TrimRight(base, "/"), token: token, Session: session, http: client}, nil
 }
 
 func (c *Client) execPath() string {
