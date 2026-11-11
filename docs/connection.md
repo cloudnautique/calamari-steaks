@@ -19,12 +19,21 @@ and remote client authentication remain work in `todo.md`.
 
 ## Identity and enrollment
 
-Build with Go 1.27.1 or later:
+Build with Go 1.27.1 or later and Node/npm. On a fresh checkout, fetch the
+reference source used for frontend brand tokens, install the locked frontend
+dependencies, and build the UI before compiling Go so the binary embeds it:
 
 ```sh
+git clone https://github.com/discobox-ai/discobox.git discobox
+git -C discobox checkout d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61
+npm ci
+npm run build
 go build -o bin/discobox-mcp ./cmd/discobox-mcp
 bin/discobox-mcp --peer-id --iroh-identity /absolute/durable/adapter/id_ed25519
 ```
+
+Skip the clone when the reference checkout already exists. Node/npm are only
+needed while building; run the compiled adapter directly afterward.
 
 The second command creates or loads a private PKCS#8 PEM key and prints only
 its public `d1-...` peer ID. It requires no server connection and does not start
@@ -55,6 +64,9 @@ bin/discobox-mcp \
 ```
 
 Replace `SERVER_PEER_ID` with the full `d1-...` ID from the server address.
+On the host, `discobox admin id` prints both the CLI client's identity and the
+server's identity; use the **server** ID for the destination above. The adapter
+ID from `--peer-id` is the one to enroll with `admin peer add`.
 The default identity location is the user config directory under
 `discobox-mcp/iroh/id_ed25519`. A process uses an ephemeral dialing key and
 presents a certificate signed by the persistent enrolled key, matching current

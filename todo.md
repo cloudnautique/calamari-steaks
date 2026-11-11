@@ -39,11 +39,12 @@ terminal content and input.
 - [x] Go tests for manager lifecycle, protocol handling, and control ownership.
 
 These are scaffolded capabilities, not confirmation of desktop UI compatibility.
-Frontend dependency installation and actual embedded rendering remain unverified.
+Frontend dependencies and asset builds pass; actual embedded rendering remains
+unverified.
 
 ## Package the terminal UI
 
-- [ ] Finish installing and verifying the pinned `ghostty-web` and MCP Apps SDK
+- [x] Finish installing and verifying the pinned `ghostty-web` and MCP Apps SDK
   dependencies; commit a lockfile after a successful install.
 - [ ] Use Ghostty's web renderer/WASM; do not require a native Ghostty app.
 - [ ] Make release builds bundle HTML, CSS, JavaScript, WASM, and dependency
@@ -129,7 +130,7 @@ Frontend dependency installation and actual embedded rendering remain unverified
 Current frontend preparation requires the reference checkout's brand tokens:
 
 ```sh
-npm install
+npm ci
 npm run build
 npm run check
 go test -race ./...
@@ -138,9 +139,9 @@ go build -o bin/discobox-mcp ./cmd/discobox-mcp
 ```
 
 The existing Go tests, race checks, vet, and build passed during scaffolding.
-Frontend dependency fetching was blocked by DNS/network restrictions in the
-development environment; a complete UI build and live host rendering have not
-yet been validated. Iroh transport is scaffolded and tested over loopback;
+Frontend dependency installation and the UI asset build now pass, with a committed
+lockfile. Live desktop host rendering has not yet been validated.
+Iroh transport is scaffolded and tested over loopback;
 two-machine and relay validation remain pending. Remote hosting is not implemented.
 
 Local client configuration examples are under `examples/`. Omitting `--box`
