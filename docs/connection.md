@@ -17,6 +17,62 @@ adapter ------ Iroh -------------> Discobox server
 HTTP MCP also exists on the adapter's loopback listener. Public HTTPS/WSS hosting
 and remote client authentication remain work in `todo.md`.
 
+## Local sandbox API mode
+
+Inside a Discobox, use its pool-forwarded API rather than dialing the host's
+Iroh identity:
+
+```sh
+discobox api-access request --reason 'Connect the MCP adapter to a persistent manager'
+./bin/discobox-mcp --local --transport http --listen 127.0.0.1:8080
+```
+
+The access request waits for a person to approve it. Once enabled, `--local`
+reads `DISCOBOX_API_URL` (falling back to `DISCOBOX_SERVER`), takes the calling
+sandbox ID from `/etc/discobox/sandbox.json`, and uses `DISCOBOX_PROJECT` or
+`default` unless `--project` is supplied. It keeps the standard HTTP proxy and
+TLS verification configuration. The pool authenticates requests as this sandbox;
+the adapter does not send a bearer token, use an Iroh key, or enroll a peer.
+`--local` cannot be combined with `--discobox`, `DISCOBOX_MCP_ENDPOINT`, or
+Iroh identity/relay flags. This mode is for the sandbox; host processes can
+already use `--discobox unix:///absolute/server.sock`.
+
+The upstream implementation is
+[`pool-agent/proxyagent/gate.go`](https://github.com/discobox-ai/discobox/blob/d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61/pool-agent/proxyagent/gate.go):
+it forwards both JSON requests and WebSocket upgrades, replacing caller-supplied
+credentials with the pool's authenticated sandbox assertion. The
+[`sandbox role`](https://github.com/discobox-ai/discobox/blob/d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61/server/internal/auth/authorizers.go)
+only permits terminal access on boxes currently led by the caller and holds
+input/attach to its effective egress permissions.
+
+If a tagged manager exists without this sandbox as parent, startup stops before
+creating a replacement. To reuse that manager, request adoption and wait for
+the person's approval:
+
+```sh
+discobox adopt MANAGER_BOX_ID --reason 'Connect the local MCP adapter to this manager'
+./bin/discobox-mcp --local --transport http --listen 127.0.0.1:8080
+```
+
+Discovery considers tagged managers led by this sandbox. With no existing
+tagged manager, it creates one with API access and lets the server resolve
+project defaults, without requesting project settings that the sandbox role
+cannot read. Saved state also records the calling parent. Losing parenthood or
+API access stops subsequent operations; startup does not replace the manager.
+
+The HTTP mode prints a private terminal URL and an authenticated `/mcp` endpoint.
+For an MCP client launching the adapter directly, use `--local` with default
+stdio transport, as in `examples/mcp-local.json`. The compiled binary still
+needs its frontend assets prepared before building, as described below.
+
+Live verification on 2026-11-11 passed through the pool-forwarded API: manager
+creation, MCP initialization and read/send/wait calls, terminal WebSocket output,
+and adapter restart with the same saved manager/exec. Chromium loaded the
+standalone page, initialized its terminal canvas, and reached `Live` without
+JavaScript exceptions. Terminal attaches request `replay=true` so an idle
+manager's existing screen appears immediately. Embedded desktop host rendering
+remains unverified.
+
 ## Identity and enrollment
 
 Build with Go 1.27.1 or later and Node/npm. On a fresh checkout, fetch the

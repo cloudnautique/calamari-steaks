@@ -34,7 +34,9 @@ type Stream struct {
 }
 
 func (c *Client) Attach(ctx context.Context) (*Stream, error) {
-	address := strings.Replace(c.base, "http", "ws", 1) + c.execPath() + "/attach"
+	// A terminal view needs the existing screen when attaching to an idle
+	// session, not only output produced after it connected. Ready releases replay.
+	address := strings.Replace(c.base, "http", "ws", 1) + c.execPath() + "/attach?replay=true"
 	// WebSocket lifetime is controlled by ctx, not the JSON request timeout.
 	httpClient := &http.Client{Transport: c.http.Transport, CheckRedirect: c.http.CheckRedirect}
 	ws, response, err := websocket.Dial(ctx, address, &websocket.DialOptions{HTTPClient: httpClient, HTTPHeader: c.headers()})

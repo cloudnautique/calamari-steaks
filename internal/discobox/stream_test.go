@@ -21,6 +21,9 @@ func TestAttachReadsFramesAcrossWebSocketMessages(t *testing.T) {
 		if r.URL.Path != "/api/projects/p/sandboxes/b/execs/e/attach" {
 			t.Errorf("unexpected attach: %s", r.URL)
 		}
+		if r.URL.Query().Get("replay") != "true" {
+			t.Error("terminal attach did not request the existing screen")
+		}
 		ws, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			t.Error(err)

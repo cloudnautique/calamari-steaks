@@ -26,6 +26,9 @@ type ManagerOptions struct {
 	StatePath string
 	Harness   string
 	Pool      string
+	// Parent is the calling sandbox in local API mode. Reuse only managers
+	// currently led by it; the server enforces authority again per request.
+	Parent string
 	// Progress goes to the operator's stderr, never the MCP stdout stream.
 	Progress func(string)
 }
@@ -37,6 +40,7 @@ type managerRecord struct {
 	Name     string `json:"name"`
 	Box      string `json:"box,omitempty"`
 	Exec     string `json:"exec,omitempty"`
+	Parent   string `json:"parent,omitempty"`
 }
 
 // DefaultManagerState keeps one persistent manager per endpoint and project.
@@ -57,6 +61,9 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 	if !identifier.MatchString(project) {
 		return nil, errors.New("invalid project ID")
 	}
+	if options.Parent != "" && !identifier.MatchString(options.Parent) {
+		return nil, errors.New("invalid manager parent ID")
+	}
 	if options.StatePath == "" {
 		return nil, errors.New("manager state path is required")
 	}
@@ -76,8 +83,8 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		return nil, fmt.Errorf("read manager state: %w", err)
 	}
 	if err == nil {
-		if record.Version != 1 || record.Endpoint != endpoint || record.Project != project {
-			return nil, errors.New("manager state belongs to a different endpoint/project or format; use the matching configuration or a different --manager-state path")
+		if record.Version != 1 || record.Endpoint != endpoint || record.Project != project || record.Parent != options.Parent {
+			return nil, errors.New("manager state belongs to a different endpoint/project, parent or format; use the matching configuration or a different --manager-state path")
 		}
 		if record.Box == "" {
 			return nil, fmt.Errorf("manager creation is pending or its outcome is unknown (name %q, state %s); inspect Discobox and reconnect with --box ID; no create was retried", record.Name, options.StatePath)
@@ -97,16 +104,19 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		if err := managerLifecycleError(box); err != nil {
 			return nil, err
 		}
+		if err := checkManagerParent(box, options.Parent); err != nil {
+			return nil, err
+		}
 		needsTag = !hasManagerTag(box)
 		progress("Reusing manager " + record.Box)
 	} else {
-		box, err := c.discoverManager(ctx)
+		box, err := c.discoverManager(ctx, options.Parent)
 		if err != nil {
 			return nil, err
 		}
 		if box != nil {
 			id := box["id"].(string) // discoverManager validates every match.
-			record = managerRecord{Version: 1, Endpoint: endpoint, Project: project, Box: id}
+			record = managerRecord{Version: 1, Endpoint: endpoint, Project: project, Box: id, Parent: options.Parent}
 			if err := reserveManager(options.StatePath, record); err != nil {
 				return nil, fmt.Errorf("save discovered manager before attaching: %w", err)
 			}
@@ -118,20 +128,24 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 	if c.Session.Box == "" {
 		// Check reachability before reserving a create intent. This avoids leaving
 		// a pending marker when the daemon is not even reachable.
-		projectInfo, err := c.request(ctx, http.MethodGet, "/projects/"+project, nil)
-		if err != nil {
-			return nil, fmt.Errorf("connect to Discobox before creating manager: %w", err)
-		}
-		if options.Harness == "" {
-			if harness, _ := projectInfo["defaultHarnessConfigId"].(string); harness == "" {
-				return nil, errors.New("project has no default harness; choose an agent with --harness or configure a project default")
+		// A sandbox cannot read project settings. Successful discovery already
+		// checked reachability; the create API resolves harness/pool defaults.
+		if options.Parent == "" {
+			projectInfo, err := c.request(ctx, http.MethodGet, "/projects/"+project, nil)
+			if err != nil {
+				return nil, fmt.Errorf("connect to Discobox before creating manager: %w", err)
+			}
+			if options.Harness == "" {
+				if harness, _ := projectInfo["defaultHarnessConfigId"].(string); harness == "" {
+					return nil, errors.New("project has no default harness; choose an agent with --harness or configure a project default")
+				}
 			}
 		}
 		var nonce [6]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return nil, err
 		}
-		record = managerRecord{Version: 1, Endpoint: endpoint, Project: project, Name: "mcp-manager-" + hex.EncodeToString(nonce[:])}
+		record = managerRecord{Version: 1, Endpoint: endpoint, Project: project, Name: "mcp-manager-" + hex.EncodeToString(nonce[:]), Parent: options.Parent}
 		if err := reserveManager(options.StatePath, record); err != nil {
 			return nil, fmt.Errorf("reserve manager state before creation: %w", err)
 		}
@@ -160,6 +174,9 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		// Persist immediately, before waiting for provisioning or the first exec.
 		if err := saveManagerRecord(options.StatePath, record); err != nil {
 			return nil, fmt.Errorf("manager %s was created but could not be saved; reconnect with --box %s: %w", record.Box, record.Box, err)
+		}
+		if err := checkManagerParent(box, options.Parent); err != nil {
+			return nil, fmt.Errorf("created manager %s saved: %w", record.Box, err)
 		}
 		progress("Created manager " + record.Box + "; waiting for its primary session")
 	}
@@ -196,7 +213,7 @@ func hasManagerTag(box map[string]any) bool {
 	return tags[managerTagKey] == managerTagValue
 }
 
-func (c *Client) discoverManager(ctx context.Context) (map[string]any, error) {
+func (c *Client) discoverManager(ctx context.Context, parent string) (map[string]any, error) {
 	query := url.Values{"tag": []string{managerTagKey + "=" + managerTagValue}}
 	result, err := c.request(ctx, http.MethodGet, "/projects/"+c.Session.Project+"/sandboxes?"+query.Encode(), nil)
 	if err != nil {
@@ -209,6 +226,7 @@ func (c *Client) discoverManager(ctx context.Context) (map[string]any, error) {
 		return nil, errors.New("invalid manager discovery response; no manager created")
 	}
 	matches := make(map[string]map[string]any)
+	var unled []string
 	for _, item := range items {
 		box, ok := item.(map[string]any)
 		if !ok {
@@ -225,6 +243,10 @@ func (c *Client) discoverManager(ctx context.Context) (map[string]any, error) {
 		if !identifier.MatchString(id) {
 			return nil, errors.New("invalid tagged manager ID; no manager created")
 		}
+		if parent != "" && entryParent(box) != parent {
+			unled = append(unled, id)
+			continue
+		}
 		matches[id] = box
 	}
 	if len(matches) > 1 {
@@ -238,7 +260,35 @@ func (c *Client) discoverManager(ctx context.Context) (map[string]any, error) {
 	for _, box := range matches {
 		return box, nil
 	}
+	if len(unled) > 0 {
+		sort.Strings(unled)
+		return nil, fmt.Errorf("tagged manager(s) %s are not led by this sandbox; use discobox adopt BOX --reason REASON and obtain approval before reconnecting; no manager created", strings.Join(unled, ", "))
+	}
 	return nil, nil
+}
+
+func entryParent(box map[string]any) string {
+	parent, _ := box["parentSandboxId"].(string)
+	return parent
+}
+
+func checkManagerParent(box map[string]any, parent string) error {
+	if parent != "" && entryParent(box) != parent {
+		return errors.New("manager is not currently led by this sandbox; obtain adoption approval before reconnecting; no replacement created")
+	}
+	return nil
+}
+
+// CheckManagerParent validates an explicit --box in local API mode.
+func (c *Client) CheckManagerParent(ctx context.Context, parent string) error {
+	box, err := c.request(ctx, http.MethodGet, "/projects/"+c.Session.Project+"/sandboxes/"+c.Session.Box, nil)
+	if err != nil {
+		return err
+	}
+	if err := managerLifecycleError(box); err != nil {
+		return err
+	}
+	return checkManagerParent(box, parent)
 }
 
 func managerLifecycleError(box map[string]any) error {

@@ -33,6 +33,7 @@ func main() {
 
 func run() error {
 	endpoint := flag.String("discobox", os.Getenv("DISCOBOX_MCP_ENDPOINT"), "Discobox HTTP(S) origin, unix:///absolute/server.sock or discobox://<peer-id>")
+	local := flag.Bool("local", false, "Use this sandbox's pool-forwarded Discobox API; requires approved API access")
 	identity := flag.String("iroh-identity", "", "Persistent adapter enrollment key (default: user config discobox-mcp/iroh/id_ed25519)")
 	peerID := flag.Bool("peer-id", false, "Initialize/load the adapter identity, print its public peer ID and exit")
 	var relays origins
@@ -49,6 +50,28 @@ func run() error {
 	var allowed origins
 	flag.Var(&allowed, "ui-origin", "Exact MCP iframe origin allowed to connect to the terminal; repeat as needed")
 	flag.Parse()
+	token := os.Getenv("DISCOBOX_MCP_TOKEN")
+	var parent string
+	if *local {
+		if *endpoint != "" || *peerID || *identity != "" || len(relays) != 0 {
+			return fmt.Errorf("--local cannot be combined with --discobox, DISCOBOX_MCP_ENDPOINT, --peer-id or Iroh options")
+		}
+		cfg, err := discobox.LocalConnection()
+		if err != nil {
+			return err
+		}
+		*endpoint, parent, token = cfg.Endpoint, cfg.Parent, ""
+		projectGiven := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "project" {
+				projectGiven = true
+			}
+		})
+		if !projectGiven {
+			*project = cfg.Project
+		}
+		log.Printf("Local Discobox API: %s (calling sandbox: %s)", *endpoint, parent)
+	}
 	if *peerID || strings.HasPrefix(*endpoint, "discobox://") {
 		if *identity == "" {
 			var err error
@@ -67,7 +90,7 @@ func run() error {
 		return nil
 	}
 	if *endpoint == "" {
-		return fmt.Errorf("--discobox or DISCOBOX_MCP_ENDPOINT is required")
+		return fmt.Errorf("--local, --discobox or DISCOBOX_MCP_ENDPOINT is required")
 	}
 	if *box == "" && *exec != "primary" {
 		return fmt.Errorf("--exec requires --box; a created manager uses its primary session")
@@ -112,12 +135,15 @@ func run() error {
 		}
 		log.Printf("Manager state: %s", *managerState)
 		startup, done := context.WithTimeout(ctx, *managerTimeout)
-		client, err = discobox.EnsureManager(startup, *endpoint, os.Getenv("DISCOBOX_MCP_TOKEN"), *project, discobox.ManagerOptions{
-			StatePath: *managerState, Harness: *harness, Pool: *pool, Progress: func(message string) { log.Print(message) },
+		client, err = discobox.EnsureManager(startup, *endpoint, token, *project, discobox.ManagerOptions{
+			StatePath: *managerState, Harness: *harness, Pool: *pool, Parent: parent, Progress: func(message string) { log.Print(message) },
 		})
 		done()
 	} else {
-		client, err = discobox.New(*endpoint, os.Getenv("DISCOBOX_MCP_TOKEN"), discobox.Session{Project: *project, Box: *box, Exec: *exec})
+		client, err = discobox.New(*endpoint, token, discobox.Session{Project: *project, Box: *box, Exec: *exec})
+		if err == nil && parent != "" {
+			err = client.CheckManagerParent(ctx, parent)
+		}
 		if err == nil {
 			err = client.ResolvePrimary(ctx)
 		}

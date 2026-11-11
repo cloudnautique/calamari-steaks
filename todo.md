@@ -37,10 +37,14 @@ terminal content and input.
 - [x] Browser observe/take-control/release flow; human control blocks adapter
   input and interrupts. Screen sharing can send a fresh snapshot to host context.
 - [x] Go tests for manager lifecycle, protocol handling, and control ownership.
+- [x] Local sandbox API mode (`--local`) through the pool proxy, with parent-aware
+  discovery, adoption guidance, and sandbox-compatible manager creation.
 
 These are scaffolded capabilities, not confirmation of desktop UI compatibility.
 Frontend dependencies and asset builds pass; actual embedded rendering remains
-unverified.
+unverified. The standalone browser terminal and local API connection were
+verified live, including MCP read/send/wait, terminal replay, and adapter restart
+reusing the same manager/exec.
 
 ## Package the terminal UI
 
