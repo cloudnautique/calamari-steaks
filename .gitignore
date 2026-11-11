@@ -1,0 +1,9 @@
+/bin/
+/node_modules/
+/web/vendor/
+.env
+*.log
+/.discobox-mcp/
+/discobox/
+.env.*
+.DS_Store

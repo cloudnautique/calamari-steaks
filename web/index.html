@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Discobox manager</title>
+  <!--STYLE-->
+</head>
+<body>
+  <main>
+    <header>
+      <div><span class="wordmark">discobox</span><span class="divider">/</span><strong>manager</strong></div>
+      <span id="status" role="status">Connecting…</span>
+    </header>
+    <div class="toolbar">
+      <code id="session">Waiting for the manager session</code>
+      <div class="actions">
+        <button id="share" hidden>Share screen with chat</button>
+        <button id="reconnect" disabled>Reconnect</button>
+        <button id="control" disabled>Take control</button>
+      </div>
+    </div>
+    <div id="viewport" class="theme-dark"><div id="terminal" aria-label="Manager terminal"></div></div>
+    <footer><span id="hint">Connecting to the existing manager.</span><span>Session stays in Discobox</span></footer>
+    <p id="notice" role="alert" hidden></p>
+  </main>
+  <!--SCRIPT-->
+</body>
+</html>

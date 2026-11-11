@@ -1,0 +1,13 @@
+{
+  "name": "discobox-mcp-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-ui.mjs",
+    "check": "node --check web/app.js && node --check scripts/build-ui.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.4",
+    "ghostty-web": "0.4.0"
+  }
+}

@@ -1,0 +1,11 @@
+# Add this section to your Codex config, replacing both absolute paths.
+# Stdio is the default: Codex starts the adapter process directly.
+# Omitting --box reuses saved state, discovers a tagged manager, or creates one.
+[mcp_servers.discobox-manager]
+command = "/absolute/path/to/discobox-mcp-ui/bin/discobox-mcp"
+args = [
+  "--discobox", "unix:///absolute/path/to/discobox.sock",
+  "--project", "default"
+]
+startup_timeout_sec = 240
+tool_timeout_sec = 90

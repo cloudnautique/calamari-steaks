@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "discobox-manager": {
+      "command": "/absolute/path/to/discobox-mcp-ui/bin/discobox-mcp",
+      "args": [
+        "--discobox", "unix:///absolute/path/to/discobox.sock",
+        "--project", "default",
+        "--box", "YOUR_MANAGER_BOX_ID",
+        "--exec", "primary"
+      ]
+    }
+  }
+}
