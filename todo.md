@@ -171,3 +171,17 @@ Local client configuration examples are under `examples/`. Omitting `--box`
 reuses saved state, discovers one tagged manager, or creates one if none exists.
 Discobox must already be running and reachable. Peer endpoints also need adapter
 enrollment; see `docs/connection.md`. Go builds now require Go 1.27.1 or later.
+
+## Task-first UX pass
+
+- [x] Launch a task box with task/harness and per-run model/pool overrides.
+- [x] Keep ordinary task boxes distinct from API-enabled coordinator managers.
+- [x] Inspect output without waking; explicitly attach/detach the same terminal.
+- [x] Send a box-scoped instruction from the overview; retain uncertain input.
+- [x] Reconstruct an attention inbox from durable Discobox requests and reported
+  program status; show connection coverage and refresh failures explicitly.
+- [x] Keep legacy manager text tools and cached resource URIs compatible.
+- [ ] Deliver repository Git sources as part of launch (URL alone is insufficient).
+- [ ] Add human-authenticated approval actions or a supported console deep link.
+- [ ] Add desktop transport/view and structured result artifacts.
+- [ ] Add supported host notifications; open-widget polling is not background delivery.

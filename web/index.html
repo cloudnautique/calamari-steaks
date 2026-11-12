@@ -3,32 +3,37 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Discobox manager</title>
+  <title>Discobox workspace</title>
   <!--STYLE-->
 </head>
 <body>
   <main>
     <header>
-      <div><span class="wordmark">discobox</span><span class="divider">/</span><strong>manager</strong></div>
-      <div class="actions"><button id="browse">Managers</button><span id="status" role="status">Connecting…</span></div>
+      <div><span class="wordmark">discobox</span><span class="divider">/</span><strong>work</strong></div>
+      <div class="actions"><button id="browse">Boxes</button><button id="inbox-button">Needs you <span id="attention-count">…</span></button><span id="status" role="status">Connecting…</span></div>
     </header>
-    <div class="toolbar">
-      <code id="session">Waiting for the manager session</code>
-      <div class="actions">
-        <button id="share" hidden>Share screen with chat</button>
-        <button id="reconnect" disabled>Reconnect</button>
-        <button id="control" disabled>Take control</button>
-      </div>
-    </div>
     <section id="manager-browser" hidden>
-      <div class="browser-heading"><div><h1>Your managers</h1><p>Open a persistent session, or create one for a new task.</p></div><button id="refresh-managers">Refresh</button></div>
-      <div id="create-manager" role="form"><label for="manager-name">New manager</label><input id="manager-name" placeholder="Name, e.g. release-review" maxlength="64" pattern="[A-Za-z0-9_-]+"><button id="create-button" type="button">Create manager</button><p class="muted">Creates a separate Discobox with API access. Uses the project's configured harness and pool.</p></div>
-      <label class="muted"><input id="show-archived" type="checkbox"> Show archived managers</label>
+      <div class="browser-heading"><div><h1>What would you like to work on?</h1><p>Choose a harness, give it a task, and follow the work in its own box.</p></div><button id="refresh-managers">Refresh boxes</button></div>
+      <div id="create-manager" role="form" aria-label="Launch a task">
+        <label for="task">Task</label><textarea id="task" rows="3" maxlength="65536" placeholder="What should the agent do?" required></textarea>
+        <div class="launch-fields"><div><label for="manager-name">Box name <small>(optional)</small></label><input id="manager-name" placeholder="release-review" maxlength="64" pattern="[A-Za-z0-9_-]+"></div><div><label for="harness">Harness</label><input id="harness" placeholder="Project default" maxlength="128" list="harness-examples"><datalist id="harness-examples"><option value="codex"><option value="claude"></datalist></div></div>
+        <details><summary>Configure this run</summary><p class="muted">Applies only to this box. Saved harness defaults stay unchanged.</p><div class="launch-fields"><div><label for="model">Model override</label><input id="model" placeholder="Harness default" maxlength="128"></div><div><label for="pool">Pool ID</label><input id="pool" placeholder="Project default" maxlength="128"></div></div></details>
+        <p class="muted">Starts with an empty workspace. Repository source delivery is not available in this launcher yet. Uses the harness's configured access; does not grant Discobox API access or add credential bindings.</p>
+        <button id="create-button" type="button" class="primary">Start box</button><p id="creation-intent" class="muted" hidden></p>
+      </div>
+      <div class="browser-heading"><h2>Your boxes</h2><label class="muted"><input id="show-archived" type="checkbox"> Show archived</label></div>
       <div id="manager-list" aria-live="polite"></div>
     </section>
-    <div id="viewport" class="theme-dark"><div id="terminal" aria-label="Manager terminal"></div></div>
-    <div id="message-form" role="form"><textarea id="message" rows="2" placeholder="Take control to message this manager" aria-label="Message manager" disabled></textarea><button id="send-message" type="button" disabled>Send</button></div>
-    <footer><span id="hint">Connecting to the existing manager.</span><span>Session stays in Discobox</span></footer>
+    <section id="workspace" hidden>
+      <div class="workspace-heading"><div><h1 id="box-title">Box workspace</h1><p id="box-state" class="muted"></p><code id="session"></code></div><div class="actions"><button id="refresh-output">Refresh output</button><button id="share" hidden>Share output with chat</button></div></div>
+      <div class="workspace-tabs" role="tablist" aria-label="Box views"><button id="overview-tab" role="tab" aria-selected="true">Task & output</button><button id="terminal-tab" role="tab" aria-selected="false">Terminal</button></div>
+      <section id="overview-panel" role="tabpanel" aria-labelledby="overview-tab"><p id="box-task"></p><p id="output-freshness" class="muted">Reading this box does not wake it.</p><pre id="output" aria-label="Terminal output snapshot">Select Refresh output to inspect the last screen.</pre><p class="muted">This is terminal output, not a structured chat transcript or verified test report. Use the terminal to inspect changes and results.</p><div id="message-receipts" aria-live="polite"></div></section>
+      <div class="toolbar" hidden><span class="muted">Opening the terminal attaches and can wake this box.</span><div class="actions"><button id="detach-terminal">Detach terminal</button><button id="reconnect" disabled>Reconnect</button><button id="control" disabled>Take control</button></div></div>
+      <div id="viewport" class="theme-dark" hidden><div id="terminal" aria-label="Box terminal"></div></div>
+      <div id="message-form" role="form"><label id="message-target" for="message">Message this box</label><div class="composer"><textarea id="message" rows="2" maxlength="65536" placeholder="Give this box an instruction…" aria-describedby="message-target"></textarea><button id="send-message" type="button">Send</button></div></div>
+    </section>
+    <aside id="inbox" hidden aria-labelledby="inbox-title"><div class="browser-heading"><h2 id="inbox-title">Needs you</h2><div class="actions"><button id="refresh-inbox">Refresh</button><button id="close-inbox">Close</button></div></div><p id="inbox-coverage" class="muted"></p><div id="inbox-items" aria-live="polite"></div><p class="muted">Requests remain in Discobox when this view closes. Approvals happen in your Discobox console; never paste credentials into chat.</p></aside>
+    <footer><span id="hint">Your work stays in Discobox when this view closes.</span><span>Desktop and service views coming later</span></footer>
     <p id="notice" role="alert" hidden></p>
   </main>
   <!--SCRIPT-->

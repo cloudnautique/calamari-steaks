@@ -124,3 +124,61 @@ and the self-contained canvas in an opaque iframe with network and native form
 submission blocked. Native Codex canvas rendering was confirmed during the
 terminal work; the expanded picker flow and Claude desktop still need native
 host verification.
+
+## Task-first workspace
+
+`list_boxes` opens a launcher and the catalog of task boxes and managers made
+through this adapter. `launch_box` takes `requestId`, `task`, and optional
+`name`, `harness`, `model`, and `pool`. These settings apply to this run only;
+they never change a saved harness. A task box starts without Discobox API access
+or explicit credential bindings. The selected harness's existing configuration
+still applies. Legacy `create_manager` keeps its coordinator role and API access.
+
+The launcher currently starts with an empty workspace. Registering a repository
+source also requires delivering its Git objects into the pool cache; accepting
+just a URL would leave the box waiting for source delivery. Source delivery,
+desktop streaming, service previews, and structured change/artifact results are
+follow-up work, not controls in this first workspace.
+
+`open_box` takes `managerId` (the box ID), and opens **Task & output** without
+attaching or waking the box. It reads a terminal snapshot; cached output carries
+its observation timestamp. **Terminal** explicitly attaches and can wake the
+same box. **Detach terminal** closes the view's attachment while keeping the box.
+The composer targets the named box and can submit without terminal control.
+Taking terminal control still blocks model writes to that box. A failed send
+keeps its text and disables resubmission until the person refreshes and inspects
+the output. The UI never automatically replays input.
+
+All text mechanisms remain available: use the returned `managerId` with
+`read_manager`, `send_manager`, `wait_manager`, and `interrupt_manager`.
+`inspect_box` is a read-only snapshot alternative. A terminal screen is untrusted
+output, not a structured conversation or proof that checks passed.
+
+`list_attention` opens the **Needs you** inbox and also returns plain text/JSON.
+It projects pending approval requests stored in Discobox and the primary agent's
+reported blocked/error/done states. A running container alone never implies that
+its agent is working or finished. Observation timestamps distinguish last-known
+reports. The open widget refreshes the inbox and selected box's reported status
+approximately every 15 seconds; a closed widget cannot produce background chat
+or OS notifications. Reopening reconstructs pending items from Discobox.
+
+The inbox is scoped to accessible, non-archived integration boxes. Local sandbox
+API mode can list their credential requests, but cannot read the human-only API,
+adoption, trust, or refresh inbox. The UI explicitly reports this coverage gap;
+a failed refresh shows unknown coverage rather than a misleading zero badge.
+Human-token connections use the unified approval listing, still filtered to
+accessible integration boxes; project-wide refresh requests remain in the
+console. This adapter does not collect credential values or approve requests
+under the person's identity. Use the Discobox console's approval inbox to answer
+requests, then refresh this view.
+
+The current resource is `ui://discobox/workspace-v4.html`. Previously published
+resource URIs remain aliases so restored desktop sessions can still initialize.
+
+This task-first pass was verified against the live local API in an opaque
+Chromium iframe with `connect-src 'none'`: launch, overview message and actual
+harness response, inbox reconstruction after reopening, explicit terminal
+attachment, take/release control, and detach back to the overview. The temporary
+test box was archived afterwards. No direct HTTP requests from the iframe or
+browser exceptions occurred during the final interaction check. Native Codex
+and Claude validation of this expanded flow is still pending.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,12 +14,18 @@ import (
 
 // Manager is a tagged persistent session, independent of any connected view.
 type Manager struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	State      string `json:"state"`
-	Parent     string `json:"parent,omitempty"`
-	Accessible bool   `json:"accessible"`
-	Archived   bool   `json:"archived"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	State      string         `json:"state"`
+	Parent     string         `json:"parent,omitempty"`
+	Accessible bool           `json:"accessible"`
+	Archived   bool           `json:"archived"`
+	Role       string         `json:"role"`
+	Task       string         `json:"task,omitempty"`
+	Harness    string         `json:"harness,omitempty"`
+	Model      string         `json:"model,omitempty"`
+	Program    map[string]any `json:"program,omitempty"`
+	ObservedAt string         `json:"observedAt,omitempty"`
 }
 
 func NewCatalog(endpoint, token, project string) (*Client, error) {
@@ -29,7 +36,17 @@ func NewCatalog(endpoint, token, project string) (*Client, error) {
 }
 
 func (c *Client) ListManagers(ctx context.Context, parent string) ([]Manager, error) {
-	result, err := c.request(ctx, http.MethodGet, "/projects/"+c.Session.Project+"/sandboxes?tag="+managerTagKey+"%3D"+managerTagValue, nil)
+	return c.listBoxes(ctx, parent, true)
+}
+func (c *Client) ListBoxes(ctx context.Context, parent string) ([]Manager, error) {
+	return c.listBoxes(ctx, parent, false)
+}
+func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool) ([]Manager, error) {
+	path := "/projects/" + c.Session.Project + "/sandboxes?tag=" + managerTagKey
+	if managersOnly {
+		path += "%3D" + managerTagValue
+	}
+	result, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +61,7 @@ func (c *Client) ListManagers(ctx context.Context, parent string) ([]Manager, er
 		if !ok {
 			return nil, errors.New("invalid manager in listing")
 		}
-		if !hasManagerTag(box) {
+		if !hasWorkspaceTag(box) || (managersOnly && !hasManagerTag(box)) {
 			continue
 		}
 		id, _ := box["id"].(string)
@@ -67,7 +84,10 @@ func (c *Client) ListManagers(ctx context.Context, parent string) ([]Manager, er
 				name = value
 			}
 		}
-		state, _ := box["displayState"].(string)
+		state, _ := runtime["displayState"].(string)
+		if state == "" {
+			state, _ = box["displayState"].(string)
+		}
 		if state == "" && desired == "archived" {
 			state = "archived"
 		}
@@ -81,7 +101,34 @@ func (c *Client) ListManagers(ctx context.Context, parent string) ([]Manager, er
 			state = "unknown"
 		}
 		parentID := entryParent(box)
-		managers = append(managers, Manager{ID: id, Name: name, State: state, Parent: parentID, Accessible: parent == "" || parentID == parent, Archived: desired == "archived"})
+		entry := Manager{ID: id, Name: name, State: state, Parent: parentID, Accessible: parent == "" || parentID == parent, Archived: desired == "archived", Role: roleOf(box)}
+		config, _ := box["config"].(map[string]any)
+		if entry.Role == "box" {
+			if prompt, ok := config["prompt"].([]any); ok {
+				for _, part := range prompt {
+					if text, ok := part.(string); ok {
+						entry.Task += text + "\n"
+					}
+				}
+			}
+		}
+		entry.Model, _ = config["model"].(string)
+		harness, _ := box["harnessConfig"].(map[string]any)
+		entry.Harness, _ = harness["name"].(string)
+		entry.ObservedAt, _ = runtime["agentStatusObservedAt"].(string)
+		agent, _ := runtime["agentStatus"].(map[string]any)
+		sessions, _ := agent["sessions"].([]any)
+		for _, raw := range sessions {
+			session, _ := raw.(map[string]any)
+			if session["primary"] == true {
+				entry.Program = safeProgram(session["programStatus"])
+				if entry.ObservedAt == "" {
+					entry.ObservedAt = textField(entry.Program, "reportedAt")
+				}
+				break
+			}
+		}
+		managers = append(managers, entry)
 	}
 	sort.Slice(managers, func(i, j int) bool {
 		if managers[i].Name == managers[j].Name {
@@ -100,8 +147,8 @@ func (c *Client) managerBox(ctx context.Context, id, parent string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	if !hasManagerTag(box) {
-		return nil, errors.New("box is not tagged as a manager")
+	if !hasWorkspaceTag(box) {
+		return nil, errors.New("box is not tagged as an adapter workspace")
 	}
 	if err := checkManagerParent(box, parent); err != nil {
 		return nil, err
@@ -145,7 +192,15 @@ func (c *Client) CreateManager(ctx context.Context, requestID string, options Ma
 		base = options.StatePath
 	}
 	key := sha256.Sum256([]byte(c.endpoint + "\n" + c.Session.Project + "\n" + options.Parent + "\n" + requestID))
-	intent := sha256.Sum256([]byte(options.Name + "\n" + options.Harness + "\n" + options.Pool))
+	intentData, err := json.Marshal([]string{options.Name, options.Harness, options.Pool, options.Task, options.Model, options.Role})
+	if err != nil {
+		return nil, err
+	}
+	intent := sha256.Sum256(intentData)
+	// Existing manager intents retain their original hash across adapter upgrades.
+	if options.Task == "" && options.Model == "" && options.Role == "" {
+		intent = sha256.Sum256([]byte(options.Name + "\n" + options.Harness + "\n" + options.Pool))
+	}
 	options.StatePath = filepath.Join(filepath.Dir(base), "creations", hex.EncodeToString(key[:16])+".json")
 	options.CreateOnly = true
 	options.Intent = hex.EncodeToString(intent[:])
@@ -165,4 +220,19 @@ func (c *Client) ArchiveManager(ctx context.Context, id, parent string) error {
 		return fmt.Errorf("archive was not confirmed; list managers to check its outcome before retrying: %w", err)
 	}
 	return nil
+}
+
+// Only presentation fields are exposed; never forward opaque runtime or harness configuration.
+func safeProgram(raw any) map[string]any {
+	value, _ := raw.(map[string]any)
+	if value == nil {
+		return nil
+	}
+	result := map[string]any{}
+	for _, key := range []string{"state", "kind", "msg", "title", "reportedAt", "progress"} {
+		if v, ok := value[key]; ok {
+			result[key] = v
+		}
+	}
+	return result
 }

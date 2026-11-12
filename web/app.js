@@ -9,7 +9,9 @@ const reconnect = byId('reconnect');
 const share = byId('share');
 let app, connection, terminal, fit, socket, owned = false, connected = false;
 let appTerminal, generation = 0, rendererReady, pendingMessage, createRequestId;
-let managerCatalog;
+let managerCatalog, selectedBoxId, selectedName, activeTab = 'overview', inboxBusy = false;
+let stopped = false, inboxTimer, outputGeneration = 0, launchIntent, rendererCleanup;
+const receipts = new Map(), drafts = new Map(), uncertainBoxes = new Set(), pendingBoxes = new Set();
 let inputQueue = Promise.resolve();
 
 function report(error) {
@@ -19,15 +21,15 @@ function report(error) {
 
 function setControl(value) {
   owned = value;
-  byId('message').disabled = !value;
-  byId('send-message').disabled = !value;
+  byId('message').disabled = pendingBoxes.has(selectedBoxId);
+  byId('send-message').disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId);
   byId('browse').disabled = value;
-  byId('message').placeholder = value ? 'Message this manager…' : 'Take control to message this manager';
+  byId('message').placeholder = 'Give this box an instruction…';
   control.textContent = owned ? 'Release control' : 'Take control';
   control.setAttribute('aria-pressed', String(owned));
   byId('hint').textContent = owned
-    ? 'You are typing. Release control to let chat drive the manager.'
-    : 'Observing. Chat can drive the manager; take control to type here.';
+    ? 'You control this box. Release control to let chat send instructions.'
+    : 'Messages target this box. Take terminal control only when you need raw keyboard input.';
 }
 
 function send(message) {
@@ -80,7 +82,7 @@ function attach() {
   notice.hidden = true;
   reconnect.disabled = true;
   control.disabled = true;
-  status.textContent = 'Connecting…';
+  status.textContent = 'Attaching / waking…';
   terminal.reset();
   const url = new URL('/terminal', connection.origin);
   url.searchParams.set('managerId', connection.session.box);
@@ -97,7 +99,7 @@ function attach() {
           connected = true;
           if (message.cols && message.rows) terminal.resize(message.cols, message.rows);
           control.disabled = false;
-          status.textContent = 'Live';
+          status.textContent = 'Terminal live';
           setControl(false);
           break;
         case 'control':
@@ -163,7 +165,7 @@ async function attachApp() {
     notice.hidden = true;
     reconnect.disabled = true;
     control.disabled = true;
-    status.textContent = 'Connecting…';
+    status.textContent = 'Attaching / waking…';
     const opened = await appCall('terminal_open', { managerId: connection.session.box });
     if (current !== generation) {
       await appCall('terminal_action', { terminalId: opened.terminalId, action: 'close' });
@@ -176,7 +178,7 @@ async function attachApp() {
     connected = true;
     setControl(false);
     control.disabled = false;
-    status.textContent = 'Live';
+    status.textContent = 'Terminal live';
     let cursor = opened.cursor;
     while (current === generation) {
       const output = await appCall('terminal_read', { terminalId: opened.terminalId, after: cursor });
@@ -206,9 +208,7 @@ async function initializeRenderer() {
   terminal.onData((data) => { if (owned) send({ type: 'input', data }); });
   const observer = new ResizeObserver(fitOwned);
   observer.observe(byId('viewport'));
-  const cleanup = () => { observer.disconnect(); socket?.close(); closeApp(); terminal.dispose(); };
-  window.addEventListener('pagehide', cleanup, { once: true });
-  if (app) app.onteardown = async () => { cleanup(); return {}; };
+  rendererCleanup = () => { observer.disconnect(); terminal.dispose(); };
 }
 
 function detach() {
@@ -218,32 +218,44 @@ function detach() {
   setControl(false);
 }
 async function start(value) {
-  if (value?.view === 'managers' || value?.managers) { showManagers(value); return; }
+  if (value?.view === 'attention') {
+    if (byId('workspace').hidden && byId('manager-browser').hidden) await refreshManagers();
+    byId('inbox').hidden = false;
+    await refreshInbox(); return;
+  }
+  if (value?.view === 'managers' || value?.view === 'boxes' || value?.managers) { showManagers(value); return; }
   if (!value?.session?.box) throw new Error('Choose a manager to open its terminal.');
   if (owned && connection?.session?.box !== value.session.box) throw new Error('Release control before switching managers.');
-  if (connected && connection?.session?.box === value.session.box) return;
+  if (selectedBoxId === value.session.box && !byId('workspace').hidden) return;
   detach();
   connection = { ...connection, ...value };
   byId('session').textContent = `${value.session.project} / ${value.session.box} / ${value.session.exec}`;
   byId('manager-browser').hidden = true;
-  document.querySelector('.toolbar').hidden = false;
-  byId('viewport').hidden = false;
-  byId('message-form').hidden = false;
-  rendererReady ||= initializeRenderer();
-  await rendererReady;
-  attach();
+  byId('workspace').hidden = false;
+  selectedBoxId = value.session.box;
+  const box = managerCatalog?.managers?.find(item => item.id === selectedBoxId);
+  selectedName = box?.name || selectedBoxId;
+  byId('box-title').textContent = selectedName;
+  byId('box-state').textContent = box ? describeBox(box) : 'Inspecting the last reported state';
+  byId('box-task').textContent = box?.task || (box?.role === 'manager' ? 'Coordinator: give this manager a task to begin.' : 'Work and output stay in this box.');
+  byId('message-target').textContent = `Send instruction to ${selectedName} · ${selectedBoxId}`;
+  renderReceipts();
+  byId('output').textContent = 'Reading output…';
+  await selectTab(value.view === 'terminal' ? 'terminal' : 'overview');
+  refreshOutput().catch(report);
 }
 
 async function workspaceCall(name, args = {}) {
   if (app) return appCall(name, args);
-  const action = { list_managers: 'list', connect_manager: 'connect', create_manager: 'create', archive_manager: 'archive' }[name];
+  const action = { list_managers: 'list', list_boxes: 'boxes', launch_box: 'launch', list_attention: 'attention', inspect_box: 'inspect', send_manager: 'message', connect_manager: 'connect', create_manager: 'create', archive_manager: 'archive' }[name];
+  if (!action) throw new Error('Unknown workspace operation');
   const response = await fetch(`/api/managers/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Manager operation failed');
   return result;
 }
 async function refreshManagers() {
-  const data = await workspaceCall('list_managers');
+  const data = await workspaceCall('list_boxes');
   showManagers(data);
 }
 function showManagers(data) {
@@ -252,25 +264,28 @@ function showManagers(data) {
   managerCatalog = data;
   notice.hidden = true;
   byId('manager-browser').hidden = false;
+  byId('workspace').hidden = true;
+  selectedBoxId = undefined; outputGeneration++;
   document.querySelector('.toolbar').hidden = true;
   byId('viewport').hidden = true;
   byId('message-form').hidden = true;
-  status.textContent = 'Managers';
-  byId('hint').textContent = `Project ${data.project || connection?.session?.project || 'default'} · Closing a view leaves its manager running.`;
+  status.textContent = 'Boxes';
+  byId('hint').textContent = `Project ${data.project || connection?.session?.project || 'default'} · Closing a view leaves its boxes in Discobox. Selecting a box does not wake it.`;
   const list = byId('manager-list'); list.replaceChildren();
   const visible = (data.managers || []).filter((manager) => !manager.archived || byId('show-archived').checked);
-  if (!visible.length) { const empty = document.createElement('p'); empty.textContent = 'No active managers. Create one to start a conversation, or show archived managers.'; list.append(empty); }
+  if (!visible.length) { const empty = document.createElement('p'); empty.textContent = 'No active boxes yet. Start a task above, or show archived boxes.'; list.append(empty); }
   for (const manager of visible) {
     const card = document.createElement('article'); card.className = 'manager-card';
     const details = document.createElement('div');
     const name = document.createElement('strong'); name.textContent = manager.name;
     const id = document.createElement('code'); id.textContent = manager.id;
     const state = document.createElement('span'); state.className = 'manager-state';
-    state.textContent = manager.state + (manager.accessible ? '' : ' · Requires adoption approval');
+    state.textContent = describeBox(manager) + (manager.accessible ? '' : ' · Requires adoption approval');
+    if (['blocked','error','done'].includes(manager.program?.state)) card.classList.add('needs-attention');
     details.append(name, id, state);
     const actions = document.createElement('div'); actions.className = 'actions';
-    const open = document.createElement('button'); open.textContent = 'Open terminal'; open.disabled = !manager.accessible || manager.archived;
-    open.onclick = async () => { open.disabled = true; try { await start(await workspaceCall('connect_manager', { managerId: manager.id })); } catch (error) { report(error); open.disabled = false; } };
+    const open = document.createElement('button'); open.textContent = 'Open workspace'; open.disabled = !manager.accessible || manager.archived;
+    open.onclick = async () => { open.disabled = true; try { await start({ ...await workspaceCall('connect_manager', { managerId: manager.id }), view: 'workspace' }); } catch (error) { report(error); open.disabled = false; } };
     actions.append(open);
     if (manager.accessible && !manager.archived) {
       const archive = document.createElement('button'); archive.textContent = 'Archive';
@@ -289,29 +304,55 @@ byId('show-archived').onchange = () => { if (managerCatalog) showManagers(manage
 byId('refresh-managers').onclick = () => refreshManagers().catch(report);
 byId('create-button').onclick = async (event) => {
   event.preventDefault();
-  const button = byId('create-button'), name = byId('manager-name');
-  if (!name.checkValidity()) { report('Use at most 64 letters, digits, underscores or hyphens for the manager name.'); return; }
+  const button = byId('create-button'), name = byId('manager-name'), task = byId('task');
+  if (!name.checkValidity() || !task.value.trim() || new TextEncoder().encode(task.value).length > 65536) { report('Add a task of at most 65536 bytes and use at most 64 letters, digits, underscores or hyphens for the optional name.'); return; }
   createRequestId ||= 'ui-' + Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  button.disabled = true; name.disabled = true; button.textContent = 'Starting manager…'; notice.hidden = true;
+  launchIntent ||= { requestId: createRequestId, name: name.value.trim(), task: task.value, harness: byId('harness').value.trim(), model: byId('model').value.trim(), pool: byId('pool').value.trim() };
+  // Freeze the exact intent until its outcome is known. An error does not imply
+  // that creation failed, and changing settings must never create another box.
+  for (const id of ['manager-name','task','harness','model','pool']) byId(id).disabled = true;
+  byId('creation-intent').hidden = false;
+  byId('creation-intent').textContent = `Creation reference: ${createRequestId}. If interrupted, reuse this exact requestId and settings with launch_box; do not start another intent before checking your boxes.`;
+  button.disabled = true; button.textContent = 'Starting box…'; notice.hidden = true;
+  let created;
   try {
-    const created = await workspaceCall('create_manager', { requestId: createRequestId, name: name.value.trim() });
-    createRequestId = undefined; name.value = ''; name.disabled = false; button.textContent = 'Create manager';
-    await start(created);
-  } catch (error) { report(error); button.textContent = 'Check creation'; }
-  finally { button.disabled = false; }
+    created = await workspaceCall('launch_box', launchIntent);
+  } catch (error) {
+    report(error); button.textContent = 'Check same creation'; return;
+  } finally { button.disabled = false; }
+  createRequestId = undefined; launchIntent = undefined;
+  for (const id of ['manager-name','task','harness','model','pool']) byId(id).disabled = false;
+  name.value = ''; task.value = ''; button.textContent = 'Start box'; byId('creation-intent').hidden = true;
+  // Once creation is confirmed, a catalog or view failure must not turn the
+  // launch button into a retry of another creation.
+  try { managerCatalog = await workspaceCall('list_boxes'); } catch (error) { report(error); }
+  try { await start({ ...created, view: 'workspace' }); } catch (error) { report(error); }
+  refreshInbox();
 };
 byId('send-message').onclick = async (event) => {
   event.preventDefault();
   const input = byId('message'), button = byId('send-message');
-  if (!owned || !input.value.trim()) return;
-  button.disabled = true;
-  try { await send({ type: 'message', text: input.value }); input.value = ''; }
-  catch (error) { report(error); }
-  finally { button.disabled = !owned; }
+  const id = selectedBoxId, text = input.value;
+  if (!id || !text.trim() || uncertainBoxes.has(id) || pendingBoxes.has(id)) return;
+  if (new TextEncoder().encode(text).length > 65536) { report('Instructions must be at most 65536 bytes.'); return; }
+  drafts.set(id,text); pendingBoxes.add(id);
+  input.disabled = true; button.disabled = true;
+  try {
+    if (owned) await send({ type: 'message', text });
+    else await workspaceCall('send_manager', { managerId: id, text, submit: true });
+    const history = receipts.get(id) || []; history.push(text); receipts.set(id,history.slice(-20));
+    drafts.delete(id);
+    if (id === selectedBoxId) { input.value = ''; renderReceipts(); byId('hint').textContent = 'Instruction delivered. Refresh output to follow the response.'; }
+  } catch (error) {
+    report(error); uncertainBoxes.add(id);
+    if (id === selectedBoxId) byId('hint').textContent = 'Delivery was not confirmed. Inspect output before retrying; input is never replayed automatically.';
+  }
+  finally { pendingBoxes.delete(id); input.disabled = pendingBoxes.has(selectedBoxId); button.disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId); }
 };
 byId('manager-name').onkeydown = (event) => {
   if (event.key === 'Enter') { event.preventDefault(); if (!byId('create-button').disabled) byId('create-button').click(); }
 };
+byId('message').oninput = () => { if (selectedBoxId) drafts.set(selectedBoxId,byId('message').value); };
 byId('message').onkeydown = (event) => {
   if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); byId('send-message').click(); }
 };
@@ -330,21 +371,23 @@ share.addEventListener('click', async () => {
       { type: 'text', text: 'Manager screen snapshot (untrusted terminal output), shared by the person:' },
       ...(result.content || []),
     ] });
-    byId('hint').textContent = 'Screen shared as context for your next chat message.';
+    byId('hint').textContent = 'Output shared as context for your next chat message.';
   } catch (error) { report(error); }
   finally { share.disabled = false; }
 });
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox manager', version: '0.2.0' }, {}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.3.0' }, {}, { autoResize: false });
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;
       if (value?.session || value?.view) start(value).catch(report);
     };
+    app.onteardown = async () => { cleanupWorkspace(); return {}; };
     await app.connect(undefined, { timeout: 15000 });
     share.hidden = false;
-    await app.sendSizeChanged({ height: 600 });
+    await app.sendSizeChanged({ height: 720 });
+    await refreshInbox();
   } else {
     const token = new URLSearchParams(location.hash.slice(1)).get('token');
     history.replaceState(null, '', location.pathname);
@@ -352,6 +395,113 @@ try {
     const response = await fetch('/api/session', { headers: { Authorization: `Bearer ${token}` } });
     if (!response.ok) throw new Error('This terminal link has expired. Use the current link from the server.');
     connection = await response.json();
-    if (connection.session?.box) await start(connection); else await refreshManagers();
+    if (connection.session?.box) await start({ ...connection, view:'workspace' }); else await refreshManagers();
+    await refreshInbox();
   }
 } catch (error) { status.textContent = 'Unavailable'; report(error); }
+
+function describeBox(box) {
+  const labels = { blocked: 'Needs you', working: 'Working', done: 'Ready for review', idle: 'Waiting for a task', error: 'Agent error' };
+  const parts = [box.state, box.harness || 'Project harness'];
+  if (box.program?.state) parts.push(labels[box.program.state] || box.program.state);
+  if (box.program?.msg) parts.push(box.program.msg);
+  if (box.observedAt) parts.push(`Last report ${new Date(box.observedAt).toLocaleString()}`);
+  if (box.role === 'manager') parts.push('Coordinator');
+  return parts.join(' · ');
+}
+async function selectTab(tab) {
+  activeTab = tab;
+  byId('overview-panel').hidden = tab !== 'overview';
+  document.querySelector('.toolbar').hidden = tab !== 'terminal';
+  byId('viewport').hidden = tab !== 'terminal';
+  byId('overview-tab').setAttribute('aria-selected',String(tab === 'overview'));
+  byId('terminal-tab').setAttribute('aria-selected',String(tab === 'terminal'));
+  if (tab === 'terminal') {
+    const id = selectedBoxId;
+    rendererReady ||= initializeRenderer(); await rendererReady;
+    if (id !== selectedBoxId || activeTab !== 'terminal' || byId('workspace').hidden) return;
+    if (!connected) attach(); else fitOwned();
+  } else if (!connected) status.textContent = 'Inspecting';
+}
+async function refreshOutput(confirmRead = false) {
+  const id = selectedBoxId, current = ++outputGeneration;
+  if (!id) return;
+  const result = await workspaceCall('inspect_box',{ managerId:id });
+  if (id !== selectedBoxId || current !== outputGeneration) return;
+  const screen = result.screen || {};
+  byId('output').textContent = [...(screen.scrollback || []),...(screen.lines || [])].join('\n') || 'No terminal output reported yet.';
+  byId('output-freshness').textContent = screen.observedAt ? `Cached output from ${new Date(screen.observedAt).toLocaleString()}. Reading does not wake this box.` : `Output fetched ${new Date().toLocaleTimeString()}. Reading does not attach or wake this box.`;
+  if (confirmRead && uncertainBoxes.has(id)) {
+    uncertainBoxes.delete(id);
+    byId('send-message').disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId);
+    byId('hint').textContent = 'Output refreshed. Check whether your instruction already arrived before sending again.';
+  }
+}
+function renderReceipts() {
+  byId('message').value = drafts.get(selectedBoxId) || '';
+  byId('message').disabled = pendingBoxes.has(selectedBoxId);
+  byId('message-receipts').replaceChildren();
+  for (const text of receipts.get(selectedBoxId) || []) {
+    const entry = document.createElement('p'); entry.className = 'receipt'; entry.textContent = 'Sent instruction · '+text; byId('message-receipts').append(entry);
+  }
+  byId('send-message').disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId);
+}
+async function refreshInbox() {
+  if (inboxBusy || stopped) return;
+  clearTimeout(inboxTimer); inboxBusy = true;
+  try {
+    const { inbox } = await workspaceCall('list_attention');
+    if (inbox.boxes) {
+      managerCatalog = { ...managerCatalog,managers:inbox.boxes };
+      if (selectedBoxId) {
+        const current = inbox.boxes.find(box => box.id === selectedBoxId);
+        if (current) byId('box-state').textContent = describeBox(current);
+      }
+    }
+    byId('attention-count').textContent = inbox.items.length;
+    byId('inbox-coverage').textContent = `${inbox.coverage}. Updated ${new Date().toLocaleTimeString()}. ${inbox.warning || ''}`;
+    byId('inbox-items').replaceChildren();
+    if (!inbox.items.length) { const p = document.createElement('p'); p.textContent = 'No attention items within this connection’s coverage.'; byId('inbox-items').append(p); }
+    for (const item of inbox.items) {
+      const card = document.createElement('article'); card.className = 'attention-card';
+      const title = document.createElement('h3'); title.textContent = item.title;
+      const box = document.createElement('p'); box.textContent = `${item.boxName} · ${item.boxId}`;
+      const reason = document.createElement('p'); reason.textContent = item.reason || 'Open the box or console to inspect the request.';
+      card.append(title,box,reason);
+      if (item.ttlSeconds) { const duration = document.createElement('p'); duration.textContent = `Requested duration: ${item.ttlSeconds} seconds`; card.append(duration); }
+      if (item.scope && Object.keys(item.scope).length) { const scope = document.createElement('pre'); scope.textContent = JSON.stringify(item.scope,null,2); card.append(scope); }
+      if (item.observedAt || item.createdAt) { const when = document.createElement('p'); when.className = 'muted'; when.textContent = `Last report: ${new Date(item.observedAt || item.createdAt).toLocaleString()}`; card.append(when); }
+      if (item.action === 'console') { const text = document.createElement('p'); text.textContent = `Open Discobox console → approval inbox. Request ${item.id}. This widget cannot approve using your human identity.`; card.append(text); }
+      const open = document.createElement('button'); open.textContent = 'Inspect box';
+      open.onclick = async () => {
+        if (owned) { report('Release terminal control before switching boxes.'); return; }
+        open.disabled = true;
+        try { const value = await workspaceCall('connect_manager',{ managerId:item.boxId }); byId('inbox').hidden = true; await start({ ...value,view:'workspace' }); } catch (error) { report(error); } finally { open.disabled = false; }
+      };
+      card.append(open); byId('inbox-items').append(card);
+    }
+  } catch (error) {
+    byId('attention-count').textContent = '?';
+    byId('inbox-coverage').textContent = `Inbox refresh failed: ${error.message}. Existing items may be stale. Check the Discobox console.`;
+  } finally {
+    inboxBusy = false;
+    if (!stopped) inboxTimer = setTimeout(refreshInbox,15000);
+  }
+}
+byId('overview-tab').onclick = () => selectTab('overview').catch(report);
+byId('terminal-tab').onclick = () => selectTab('terminal').catch(report);
+byId('refresh-output').onclick = () => refreshOutput(true).catch(report);
+byId('inbox-button').onclick = () => { byId('inbox').hidden = !byId('inbox').hidden; if (!byId('inbox').hidden) refreshInbox(); };
+byId('close-inbox').onclick = () => { byId('inbox').hidden = true; };
+byId('refresh-inbox').onclick = refreshInbox;
+function cleanupWorkspace() {
+  if (stopped) return;
+  stopped = true; clearTimeout(inboxTimer); outputGeneration++;
+  socket?.close(); closeApp(); rendererCleanup?.();
+}
+window.addEventListener('pagehide',cleanupWorkspace,{ once:true });
+byId('detach-terminal').onclick = () => {
+  detach(); control.disabled = true; reconnect.disabled = false;
+  selectTab('overview').catch(report);
+  byId('hint').textContent = 'Terminal detached. The box remains in Discobox and can sleep under its normal idle policy.';
+};

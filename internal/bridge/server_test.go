@@ -135,7 +135,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 12 {
+	if len(listed.Tools) != 17 {
 		t.Fatalf("tools: %d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
@@ -153,6 +153,15 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 			t.Fatalf("%s: error=%v content=%v", name, result.IsError, result.Content)
 		}
 		return result
+	}
+	workspace := call("open_box", map[string]any{"managerId": "manager"}, false)
+	encoded, _ := json.Marshal(workspace.StructuredContent)
+	if !strings.Contains(string(encoded), `"view":"workspace"`) || b.attaches.Load() != 0 {
+		t.Fatal("opening the workspace attached or woke the terminal")
+	}
+	call("inspect_box", map[string]any{"managerId": "manager"}, false)
+	if b.attaches.Load() != 0 || b.inputs.Load() != 0 {
+		t.Fatal("inspection attached or wrote terminal input")
 	}
 	call("read_manager", map[string]any{"scrollback": 20}, false)
 	result := call("send_manager", map[string]any{"text": "review the patch", "submit": true}, false)

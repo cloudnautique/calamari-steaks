@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const managerPrompt = `You are the persistent Discobox manager for a desktop assistant and its user. Coordinate work by creating and driving worker discoboxes through the Discobox API available to you. Follow the user's task and the permissions and credentials already granted to you. Report progress, results, and blockers clearly. Do not create workers or begin a project until a task arrives. For now, acknowledge that you are ready and wait for instructions in this session.`
@@ -25,6 +26,9 @@ const managerTagValue = "manager"
 type ManagerOptions struct {
 	StatePath string
 	Harness   string
+	Task      string
+	Model     string
+	Role      string // Empty preserves the legacy manager launch. "box" launches a task without API access.
 	Pool      string
 	// Parent is the calling sandbox in local API mode. Reuse only managers
 	// currently led by it; the server enforces authority again per request.
@@ -74,6 +78,15 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 	if options.Name != "" && (!identifier.MatchString(options.Name) || len(options.Name) > 64) {
 		return nil, errors.New("manager name must contain 1 to 64 letters, digits, underscores or hyphens")
 	}
+	if options.Role != "" && options.Role != "box" {
+		return nil, errors.New("invalid launch role")
+	}
+	if len(options.Task) > 64<<10 || !utf8.ValidString(options.Task) || (options.Role == "box" && strings.TrimSpace(options.Task) == "") {
+		return nil, errors.New("task must contain 1 to 65536 bytes of valid text")
+	}
+	if len(options.Model) > 128 {
+		return nil, errors.New("model must be at most 128 bytes")
+	}
 	c, err := newClient(endpoint, token, Session{Project: project, Exec: "primary"})
 	if err != nil {
 		return nil, err
@@ -114,7 +127,7 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		if err := checkManagerParent(box, options.Parent); err != nil {
 			return nil, err
 		}
-		needsTag = !hasManagerTag(box)
+		needsTag = roleOf(box) != launchRole(options)
 		progress("Reusing manager " + record.Box)
 	} else if !options.CreateOnly {
 		box, err := c.discoverManager(ctx, options.Parent)
@@ -155,15 +168,27 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		name := options.Name
 		if name == "" {
 			name = "mcp-manager-" + hex.EncodeToString(nonce[:])
+			if options.Role == "box" {
+				name = "mcp-task-" + hex.EncodeToString(nonce[:])
+			}
 		}
 		record = managerRecord{Version: 1, Endpoint: endpoint, Project: project, Name: name, Parent: options.Parent, Intent: options.Intent}
 		if err := reserveManager(options.StatePath, record); err != nil {
 			return nil, fmt.Errorf("reserve manager state before creation: %w", err)
 		}
-		body := map[string]any{
-			"discoboxApi": true,
-			"config":      map[string]any{"name": record.Name, "description": "Persistent manager for the Discobox MCP adapter", "prompt": []string{managerPrompt}},
+		prompt := managerPrompt
+		description := "Persistent manager for the Discobox MCP adapter"
+		if options.Role == "box" {
+			prompt = options.Task
+			description = "Task launched through the Discobox MCP adapter"
+		} else if options.Task != "" {
+			prompt += "\n\nFirst task from the person:\n" + options.Task
 		}
+		config := map[string]any{"name": record.Name, "description": description, "prompt": []string{prompt}}
+		if options.Model != "" {
+			config["model"] = options.Model
+		}
+		body := map[string]any{"discoboxApi": options.Role != "box", "config": config}
 		if options.Harness != "" {
 			body["harnessName"] = options.Harness
 		}
@@ -205,12 +230,12 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		// Save the box and exec first, so a failed tag write can be retried on
 		// the same manager, including managers created by older adapter versions.
 		box, err := c.request(ctx, http.MethodPatch, "/projects/"+project+"/sandboxes/"+c.Session.Box+"/meta", map[string]any{
-			"setTags": map[string]string{managerTagKey: managerTagValue},
+			"setTags": map[string]string{managerTagKey: launchRole(options)},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("manager %s saved, but discovery tag could not be set; retry reuses it: %w", c.Session.Box, err)
 		}
-		if !hasManagerTag(box) {
+		if roleOf(box) != launchRole(options) {
 			return nil, fmt.Errorf("manager %s saved, but Discobox did not confirm its discovery tag; retry reuses it", c.Session.Box)
 		}
 		progress("Tagged manager " + c.Session.Box + " for future discovery")
@@ -218,6 +243,22 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 	return c, nil
 }
 
+func launchRole(options ManagerOptions) string {
+	if options.Role == "box" {
+		return "box"
+	}
+	return managerTagValue
+}
+func roleOf(box map[string]any) string {
+	meta, _ := box["meta"].(map[string]any)
+	tags, _ := meta["tags"].(map[string]any)
+	role, _ := tags[managerTagKey].(string)
+	return role
+}
+func hasWorkspaceTag(box map[string]any) bool {
+	role := roleOf(box)
+	return role == "box" || role == managerTagValue
+}
 func hasManagerTag(box map[string]any) bool {
 	meta, _ := box["meta"].(map[string]any)
 	tags, _ := meta["tags"].(map[string]any)
