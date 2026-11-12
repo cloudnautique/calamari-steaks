@@ -93,6 +93,13 @@ func TestAppResourceIsSelfContainedAndAppToolsAreHidden(t *testing.T) {
 		t.Fatal("missing app resource")
 	}
 	html := resource.Contents[0].Text
+	legacy, err := client.ReadResource(ctx, &mcp.ReadResourceParams{URI: "ui://discobox/manager.html"})
+	if err != nil {
+		t.Fatalf("restored client cannot read its published resource: %v", err)
+	}
+	if len(legacy.Contents) != 1 || legacy.Contents[0].URI != "ui://discobox/manager.html" || legacy.Contents[0].Text != html {
+		t.Fatal("original resource URI did not return the current self-contained terminal")
+	}
 	if strings.Contains(html, s.Origin) || strings.Contains(html, s.Token()) || strings.Contains(html, "__ASSET_BASE__") || strings.Contains(html, "<script src=") {
 		t.Fatal("resource depends on local assets or exposes an access token")
 	}

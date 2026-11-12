@@ -52,18 +52,22 @@ func (s *Server) MCP() *mcp.Server {
 		err := s.writeAs("mcp", func() error { var err error; result, err = s.Client.Interrupt(ctx); return err })
 		return nil, result, err
 	})
-	server.AddResource(&mcp.Resource{URI: uiResource, Name: "Discobox manager", MIMEType: "text/html;profile=mcp-app"}, func(_ context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		html, err := web.HTML()
-		if err != nil {
-			return nil, fmt.Errorf("load terminal UI: %w", err)
-		}
-		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: uiResource, MIMEType: "text/html;profile=mcp-app", Text: html,
-			Meta: mcp.Meta{"ui": map[string]any{"prefersBorder": true, "csp": map[string]any{
-				"connectDomains":  []string{},
-				"resourceDomains": []string{},
-			}}},
-		}}}, nil
-	})
+	// Previously published resource URIs remain readable by restored sessions
+	// whose tool descriptors are cached by the desktop host.
+	for _, uri := range []string{uiResource, "ui://discobox/manager.html"} {
+		server.AddResource(&mcp.Resource{URI: uri, Name: "Discobox manager", MIMEType: "text/html;profile=mcp-app"}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			html, err := web.HTML()
+			if err != nil {
+				return nil, fmt.Errorf("load terminal UI: %w", err)
+			}
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/html;profile=mcp-app", Text: html,
+				Meta: mcp.Meta{"ui": map[string]any{"prefersBorder": true, "csp": map[string]any{
+					"connectDomains":  []string{},
+					"resourceDomains": []string{},
+				}}},
+			}}}, nil
+		})
+	}
 	s.appTools(server)
 	return server
 }

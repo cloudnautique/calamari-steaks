@@ -175,19 +175,25 @@ func run() error {
 			return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 				started := time.Now()
 				var tool string
+				var resource string
 				switch params := req.GetParams().(type) {
 				case *mcp.CallToolParamsRaw:
 					tool = params.Name
 				case *mcp.CallToolParams:
 					tool = params.Name
+				case *mcp.ReadResourceParams:
+					resource = params.URI
+					if index := strings.IndexAny(resource, "?#"); index >= 0 {
+						resource = resource[:index]
+					}
 				}
-				log.Printf("MCP start method=%q tool=%q", method, tool)
+				log.Printf("MCP start method=%q tool=%q resource=%q", method, tool, resource)
 				result, err := next(ctx, method, req)
 				failed := err != nil
 				if called, ok := result.(*mcp.CallToolResult); ok && called.IsError {
 					failed = true
 				}
-				log.Printf("MCP done method=%q tool=%q duration=%s failed=%t", method, tool, time.Since(started).Round(time.Millisecond), failed)
+				log.Printf("MCP done method=%q tool=%q resource=%q duration=%s failed=%t", method, tool, resource, time.Since(started).Round(time.Millisecond), failed)
 				return result, err
 			}
 		})

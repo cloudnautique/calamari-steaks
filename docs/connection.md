@@ -81,6 +81,13 @@ the SDK, terminal renderer, WASM and styles in one response. An embedded canvas
 does not fetch scripts or WASM from the adapter's loopback HTTP listener and
 does not make a separate WebSocket connection.
 
+The originally published `ui://discobox/manager.html` remains readable and
+returns the current self-contained app, so restored desktop sessions with cached
+tool descriptors can still initialize. Keep published resource URIs available
+when introducing a newer version. Request logs include the resource URI (without
+query/fragment) so failed resource lookups are distinguishable from app-handshake
+or backend-terminal failures.
+
 The canvas uses the host's MCP Apps `postMessage` bridge to call three tools
 marked with `_meta.ui.visibility = ["app"]`: `terminal_open`, `terminal_read`,
 and `terminal_action`. Terminal output is bounded, base64-encoded and read by
