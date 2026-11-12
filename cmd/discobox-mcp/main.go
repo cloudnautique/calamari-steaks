@@ -34,6 +34,7 @@ func main() {
 func run() error {
 	endpoint := flag.String("discobox", os.Getenv("DISCOBOX_MCP_ENDPOINT"), "Discobox HTTP(S) origin, unix:///absolute/server.sock or discobox://<peer-id>")
 	local := flag.Bool("local", false, "Use this sandbox's pool-forwarded Discobox API; requires approved API access")
+	browse := flag.Bool("browse", false, "Start with the manager picker; do not discover or create a manager at startup")
 	identity := flag.String("iroh-identity", "", "Persistent adapter enrollment key (default: user config discobox-mcp/iroh/id_ed25519)")
 	peerID := flag.Bool("peer-id", false, "Initialize/load the adapter identity, print its public peer ID and exit")
 	var relays origins
@@ -97,6 +98,9 @@ func run() error {
 	if *box == "" && *exec != "primary" {
 		return fmt.Errorf("--exec requires --box; a created manager uses its primary session")
 	}
+	if *browse && (*box != "" || *exec != "primary") {
+		return fmt.Errorf("--browse cannot be combined with --box or --exec")
+	}
 	if *box != "" && (*managerState != "" || *harness != "" || *pool != "") {
 		return fmt.Errorf("--manager-state, --harness and --pool apply only when --box is omitted")
 	}
@@ -128,7 +132,9 @@ func run() error {
 		return fmt.Errorf("--iroh-identity and --iroh-relay require a discobox:// peer endpoint")
 	}
 	var client *discobox.Client
-	if *box == "" {
+	if *browse {
+		client, err = discobox.NewCatalog(*endpoint, token, *project)
+	} else if *box == "" {
 		if *managerState == "" {
 			*managerState, err = discobox.DefaultManagerState(*endpoint, *project)
 			if err != nil {
@@ -165,7 +171,7 @@ func run() error {
 			return fmt.Errorf("access token file is empty")
 		}
 	}
-	s, err := bridge.New(client, origin, allowed, accessToken)
+	s, err := bridge.New(client, origin, allowed, accessToken, discobox.ManagerOptions{StatePath: *managerState, Parent: parent, Harness: *harness, Pool: *pool})
 	if err != nil {
 		return err
 	}
@@ -232,7 +238,11 @@ func run() error {
 		defer done()
 		httpServer.Shutdown(shutdown)
 	}()
-	log.Printf("Manager: %s / %s / %s", client.Session.Project, client.Session.Box, client.Session.Exec)
+	if client.Session.Box != "" {
+		log.Printf("Manager: %s / %s / %s", client.Session.Project, client.Session.Box, client.Session.Exec)
+	} else {
+		log.Printf("Manager picker ready for project %s; no manager created at startup", client.Session.Project)
+	}
 	log.Printf("Local terminal (private link): %s", s.BrowserURL())
 	if err := web.Ready(); err != nil {
 		log.Printf("Terminal UI not built: %v. MCP read/send/wait remain available.", err)

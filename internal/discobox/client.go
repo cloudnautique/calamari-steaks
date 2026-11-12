@@ -36,10 +36,11 @@ func (s Session) Validate() error {
 }
 
 type Client struct {
-	base    string
-	http    *http.Client
-	token   string
-	Session Session
+	endpoint string
+	base     string
+	http     *http.Client
+	token    string
+	Session  Session
 }
 
 func New(endpoint, token string, session Session) (*Client, error) {
@@ -86,7 +87,7 @@ func newClient(endpoint, token string, session Session) (*Client, error) {
 	}
 	client.Timeout = 75 * time.Second
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{base: strings.TrimRight(base, "/"), token: token, Session: session, http: client}, nil
+	return &Client{endpoint: strings.TrimRight(endpoint, "/"), base: strings.TrimRight(base, "/"), token: token, Session: session, http: client}, nil
 }
 
 func (c *Client) execPath() string {
@@ -134,6 +135,10 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (ma
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		// Do not forward arbitrary upstream error bodies or credential-bearing URLs.
 		return nil, &HTTPError{Status: response.StatusCode, Path: path}
+	}
+	// Discobox archives acknowledge DELETE with 202 and no response body.
+	if len(data) == 0 && (response.StatusCode == http.StatusNoContent || (method == http.MethodDelete && response.StatusCode == http.StatusAccepted)) {
+		return map[string]any{}, nil
 	}
 	var result map[string]any
 	if err := json.Unmarshal(data, &result); err != nil {

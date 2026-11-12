@@ -21,3 +21,19 @@ footer { border-top: 1px solid var(--line); color: var(--text-faint); font-size:
 #hint { color: var(--text-muted); }
 #notice { margin: 0; padding: var(--space-3) var(--space-4); color: var(--warn); background: var(--ink-raised); font-size: 13px; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
+[hidden] { display: none !important; }
+#manager-browser { flex: 1; overflow: auto; padding: var(--space-4); }
+.browser-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+h1 { font-size: 20px; margin: 0 0 6px; }
+.browser-heading p, .muted { color: var(--text-muted); font-size: 12px; }
+#create-manager { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 20px 0; padding: 16px; background: var(--ink-raised); border: 1px solid var(--line); border-radius: var(--radius-key); }
+#create-manager p { flex-basis: 100%; margin: 0; }
+input, textarea { background: var(--ink); border: 1px solid var(--line-bright); color: var(--text); border-radius: var(--radius-key); font: inherit; padding: 8px 10px; min-width: 0; }
+#manager-name { flex: 1; }
+.manager-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.manager-card strong { display: block; margin-bottom: 5px; }
+.manager-card code { color: var(--text-faint); font-size: 11px; overflow-wrap: anywhere; }
+.manager-state { display: block; color: var(--text-muted); font-size: 12px; margin-top: 6px; }
+#message-form { display: flex; gap: 8px; padding: 10px var(--space-4); border-top: 1px solid var(--line); }
+#message { flex: 1; resize: vertical; font-size: 13px; }
+#message-form button { align-self: center; }

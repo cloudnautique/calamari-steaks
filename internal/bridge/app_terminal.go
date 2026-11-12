@@ -22,16 +22,17 @@ type terminalChunk struct {
 	data   []byte
 }
 type appTerminal struct {
-	id     string
-	stream *discobox.Stream
-	cancel context.CancelFunc
-	timer  *time.Timer
-	mu     sync.Mutex
-	chunks []terminalChunk
-	bytes  int
-	cursor uint64
-	wake   chan struct{}
-	done   bool
+	id      string
+	manager *managerConnection
+	stream  *discobox.Stream
+	cancel  context.CancelFunc
+	timer   *time.Timer
+	mu      sync.Mutex
+	chunks  []terminalChunk
+	bytes   int
+	cursor  uint64
+	wake    chan struct{}
+	done    bool
 }
 type terminalRead struct {
 	TerminalID string `json:"terminalId"`
@@ -40,6 +41,7 @@ type terminalRead struct {
 type terminalAction struct {
 	TerminalID string `json:"terminalId"`
 	Action     string `json:"action" jsonschema:"claim, release, input, resize or close"`
+	Text       string `json:"text,omitempty"`
 	Data       string `json:"data,omitempty" jsonschema:"Base64 terminal input; never replay an uncertain input"`
 	Cols       int    `json:"cols,omitempty"`
 	Rows       int    `json:"rows,omitempty"`
@@ -47,8 +49,12 @@ type terminalAction struct {
 
 func (s *Server) appTools(server *mcp.Server) {
 	appOnly := mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_open", Description: "Attach an MCP App view to the pinned terminal. Does not create or replace a manager.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
-		screen, err := s.Client.Screen(ctx, 0)
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_open", Description: "Attach an MCP App view to the pinned terminal. Does not create or replace a manager.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
+		manager, err := s.manager(ctx, input.ManagerID)
+		if err != nil {
+			return nil, nil, err
+		}
+		screen, err := manager.Client.Screen(ctx, 0)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -64,13 +70,13 @@ func (s *Server) appTools(server *mcp.Server) {
 		defer stopRequest()
 		// Stop the startup deadline after dialing without canceling the stream.
 		stopTimer := time.AfterFunc(15*time.Second, cancel)
-		stream, err := s.Client.Attach(lifetime)
+		stream, err := manager.Client.Attach(lifetime)
 		stopTimer.Stop()
 		if err != nil {
 			cancel()
 			return nil, nil, err
 		}
-		view := &appTerminal{id: id, stream: stream, cancel: cancel, wake: make(chan struct{})}
+		view := &appTerminal{id: id, manager: manager, stream: stream, cancel: cancel, wake: make(chan struct{})}
 		s.appMu.Lock()
 		defer s.appMu.Unlock()
 		if len(s.appTerminals) >= 8 {
@@ -88,7 +94,7 @@ func (s *Server) appTools(server *mcp.Server) {
 			stream.Close()
 			return nil, nil, err
 		}
-		return nil, map[string]any{"terminalId": id, "session": s.Client.Session, "cols": screen["cols"], "rows": screen["rows"], "cursor": 0}, nil
+		return nil, map[string]any{"terminalId": id, "session": manager.Client.Session, "cols": screen["cols"], "rows": screen["rows"], "cursor": 0}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "terminal_read", Description: "Read terminal bytes through the MCP App bridge from a cursor. May wait up to 12 seconds; safe to repeat a read.", Meta: appOnly, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalRead) (*mcp.CallToolResult, map[string]any, error) {
 		view, err := s.appTerminal(input.TerminalID)
@@ -130,16 +136,16 @@ func (s *Server) appTools(server *mcp.Server) {
 			}
 		}
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_action", Description: "MCP App terminal ownership, input, resize and detach. Never retry input whose outcome is uncertain.", Meta: appOnly}, func(_ context.Context, _ *mcp.CallToolRequest, input terminalAction) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_action", Description: "MCP App terminal ownership, input, resize and detach. Never retry input whose outcome is uncertain.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalAction) (*mcp.CallToolResult, map[string]any, error) {
 		view, err := s.appTerminal(input.TerminalID)
 		if err != nil {
 			return nil, nil, err
 		}
 		switch input.Action {
 		case "claim":
-			err = s.claim(view.id)
+			err = view.manager.claim(view.id)
 		case "release":
-			s.release(view.id)
+			view.manager.release(view.id)
 		case "close":
 			s.closeAppTerminal(view.id)
 		case "input":
@@ -150,9 +156,11 @@ func (s *Server) appTools(server *mcp.Server) {
 			if decodeErr != nil || len(data) == 0 || len(data) > 64<<10 {
 				return nil, nil, errors.New("terminal input must be 1 to 65536 bytes encoded as base64")
 			}
-			err = s.writeAs(view.id, func() error { return view.stream.Write(discobox.Input, data) })
+			err = view.manager.writeAs(view.id, func() error { return view.stream.Write(discobox.Input, data) })
+		case "message":
+			err = view.manager.writeAs(view.id, func() error { _, err := view.manager.Client.Send(ctx, input.Text, true); return err })
 		case "resize":
-			err = s.writeAs(view.id, func() error {
+			err = view.manager.writeAs(view.id, func() error {
 				if err := view.stream.Resize(input.Cols, input.Rows); err != nil {
 					return err
 				}
@@ -184,7 +192,7 @@ func (s *Server) closeAppTerminal(id string) {
 		view.timer.Stop()
 		view.cancel()
 		view.stream.Close()
-		s.release(id)
+		view.manager.release(id)
 	}
 }
 func (view *appTerminal) readOutput() {

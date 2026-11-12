@@ -10,7 +10,7 @@
   <main>
     <header>
       <div><span class="wordmark">discobox</span><span class="divider">/</span><strong>manager</strong></div>
-      <span id="status" role="status">Connecting…</span>
+      <div class="actions"><button id="browse">Managers</button><span id="status" role="status">Connecting…</span></div>
     </header>
     <div class="toolbar">
       <code id="session">Waiting for the manager session</code>
@@ -20,7 +20,14 @@
         <button id="control" disabled>Take control</button>
       </div>
     </div>
+    <section id="manager-browser" hidden>
+      <div class="browser-heading"><div><h1>Your managers</h1><p>Open a persistent session, or create one for a new task.</p></div><button id="refresh-managers">Refresh</button></div>
+      <div id="create-manager" role="form"><label for="manager-name">New manager</label><input id="manager-name" placeholder="Name, e.g. release-review" maxlength="64" pattern="[A-Za-z0-9_-]+"><button id="create-button" type="button">Create manager</button><p class="muted">Creates a separate Discobox with API access. Uses the project's configured harness and pool.</p></div>
+      <label class="muted"><input id="show-archived" type="checkbox"> Show archived managers</label>
+      <div id="manager-list" aria-live="polite"></div>
+    </section>
     <div id="viewport" class="theme-dark"><div id="terminal" aria-label="Manager terminal"></div></div>
+    <div id="message-form" role="form"><textarea id="message" rows="2" placeholder="Take control to message this manager" aria-label="Message manager" disabled></textarea><button id="send-message" type="button" disabled>Send</button></div>
     <footer><span id="hint">Connecting to the existing manager.</span><span>Session stays in Discobox</span></footer>
     <p id="notice" role="alert" hidden></p>
   </main>

@@ -16,6 +16,7 @@ type browserMessage struct {
 	Type  string `json:"type"`
 	Token string `json:"token,omitempty"`
 	Data  string `json:"data,omitempty"`
+	Text  string `json:"text,omitempty"`
 	Cols  int    `json:"cols,omitempty"`
 	Rows  int    `json:"rows,omitempty"`
 }
@@ -42,12 +43,17 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		ws.Close(websocket.StatusPolicyViolation, "authentication required")
 		return
 	}
-	screen, err := s.Client.Screen(ctx, 0)
+	manager, err := s.manager(ctx, r.URL.Query().Get("managerId"))
 	if err != nil {
 		sendJSON(ctx, ws, map[string]any{"type": "error", "message": err.Error()})
 		return
 	}
-	stream, err := s.Client.Attach(ctx)
+	screen, err := manager.Client.Screen(ctx, 0)
+	if err != nil {
+		sendJSON(ctx, ws, map[string]any{"type": "error", "message": err.Error()})
+		return
+	}
+	stream, err := manager.Client.Attach(ctx)
 	if err != nil {
 		sendJSON(ctx, ws, map[string]any{"type": "error", "message": err.Error()})
 		return
@@ -58,8 +64,8 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner := hex.EncodeToString(key[:])
-	defer s.release(owner)
-	if err := sendJSON(ctx, ws, map[string]any{"type": "connected", "session": s.Client.Session, "cols": screen["cols"], "rows": screen["rows"]}); err != nil {
+	defer manager.release(owner)
+	if err := sendJSON(ctx, ws, map[string]any{"type": "connected", "session": manager.Client.Session, "cols": screen["cols"], "rows": screen["rows"]}); err != nil {
 		return
 	}
 	// An attach is a byte stream: frame boundaries need not match WS messages.
@@ -106,17 +112,22 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		}
 		switch message.Type {
 		case "claim":
-			err = s.claim(owner)
+			err = manager.claim(owner)
 			if err == nil {
 				err = sendJSON(ctx, ws, map[string]any{"type": "control", "owned": true})
 			}
 		case "release":
-			s.release(owner)
+			manager.release(owner)
 			err = sendJSON(ctx, ws, map[string]any{"type": "control", "owned": false})
 		case "input":
-			err = s.writeAs(owner, func() error { return stream.Write(discobox.Input, []byte(message.Data)) })
+			err = manager.writeAs(owner, func() error { return stream.Write(discobox.Input, []byte(message.Data)) })
+		case "message":
+			err = manager.writeAs(owner, func() error { _, err := manager.Client.Send(ctx, message.Text, true); return err })
+			if err == nil {
+				err = sendJSON(ctx, ws, map[string]any{"type": "sent"})
+			}
 		case "resize":
-			err = s.writeAs(owner, func() error {
+			err = manager.writeAs(owner, func() error {
 				if err := stream.Resize(message.Cols, message.Rows); err != nil {
 					return err
 				}

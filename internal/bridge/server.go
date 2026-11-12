@@ -15,20 +15,21 @@ import (
 	"github.com/cloudnautique/discobox-mcp-ui/web"
 )
 
-// Server owns one pinned session. It never accepts upstream URLs or box IDs
-// from a web request or tool call.
+// Server owns a catalog on one configured endpoint/project. Connected manager
+// sessions are pinned independently; callers cannot supply upstream URLs.
 type Server struct {
 	Client         *discobox.Client
 	Origin         string
 	token          string
 	allowedOrigins map[string]bool
-	mu             sync.Mutex
-	controller     string
+	managersMu     sync.Mutex
+	managers       map[string]*managerConnection
+	managerOptions discobox.ManagerOptions
 	appMu          sync.Mutex
 	appTerminals   map[string]*appTerminal
 }
 
-func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string) (*Server, error) {
+func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string, options discobox.ManagerOptions) (*Server, error) {
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "http" || u.Host == "" {
 		return nil, errors.New("invalid local UI origin")
@@ -43,7 +44,10 @@ func New(client *discobox.Client, origin string, extraOrigins []string, accessTo
 	if decoded, err := hex.DecodeString(accessToken); err != nil || len(decoded) != 32 {
 		return nil, errors.New("access token must contain 64 hexadecimal characters")
 	}
-	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal)}
+	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
+	if client.Session.Box != "" {
+		s.managers[client.Session.Box] = &managerConnection{Client: client}
+	}
 	for _, origin := range extraOrigins {
 		if origin != "null" {
 			u, err := url.Parse(origin)
@@ -68,9 +72,12 @@ func (s *Server) connection() map[string]any {
 
 // A single lock covers both ownership and writing. A control transfer cannot
 // race a tool submission or slip between parts of a terminal input operation.
-func (s *Server) writeAs(owner string, write func() error) error {
+func (s *managerConnection) writeAs(owner string, write func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.archived {
+		return errors.New("manager is archived; choose another manager")
+	}
 	if owner == "mcp" {
 		if s.controller != "" {
 			return errors.New("a person has terminal control; ask them to release it before sending instructions")
@@ -81,9 +88,12 @@ func (s *Server) writeAs(owner string, write func() error) error {
 	return write()
 }
 
-func (s *Server) claim(owner string) error {
+func (s *managerConnection) claim(owner string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.archived {
+		return errors.New("manager is archived; choose another manager")
+	}
 	if s.controller != "" && s.controller != owner {
 		return errors.New("another browser has terminal control")
 	}
@@ -91,7 +101,7 @@ func (s *Server) claim(owner string) error {
 	return nil
 }
 
-func (s *Server) release(owner string) {
+func (s *managerConnection) release(owner string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.controller == owner {
@@ -133,6 +143,7 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(s.connection())
 	})))
+	mux.Handle("POST /api/managers/{action}", s.auth(http.HandlerFunc(s.workspaceHTTP)))
 	mux.HandleFunc("GET /terminal", s.terminal)
 	if mcpHandler != nil {
 		mux.Handle("/mcp", s.auth(mcpHandler))

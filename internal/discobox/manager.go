@@ -28,7 +28,10 @@ type ManagerOptions struct {
 	Pool      string
 	// Parent is the calling sandbox in local API mode. Reuse only managers
 	// currently led by it; the server enforces authority again per request.
-	Parent string
+	Parent     string
+	CreateOnly bool
+	Name       string
+	Intent     string
 	// Progress goes to the operator's stderr, never the MCP stdout stream.
 	Progress func(string)
 }
@@ -41,6 +44,7 @@ type managerRecord struct {
 	Box      string `json:"box,omitempty"`
 	Exec     string `json:"exec,omitempty"`
 	Parent   string `json:"parent,omitempty"`
+	Intent   string `json:"intent,omitempty"`
 }
 
 // DefaultManagerState keeps one persistent manager per endpoint and project.
@@ -67,6 +71,9 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 	if options.StatePath == "" {
 		return nil, errors.New("manager state path is required")
 	}
+	if options.Name != "" && (!identifier.MatchString(options.Name) || len(options.Name) > 64) {
+		return nil, errors.New("manager name must contain 1 to 64 letters, digits, underscores or hyphens")
+	}
 	c, err := newClient(endpoint, token, Session{Project: project, Exec: "primary"})
 	if err != nil {
 		return nil, err
@@ -83,8 +90,8 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		return nil, fmt.Errorf("read manager state: %w", err)
 	}
 	if err == nil {
-		if record.Version != 1 || record.Endpoint != endpoint || record.Project != project || record.Parent != options.Parent {
-			return nil, errors.New("manager state belongs to a different endpoint/project, parent or format; use the matching configuration or a different --manager-state path")
+		if record.Version != 1 || record.Endpoint != endpoint || record.Project != project || record.Parent != options.Parent || record.Intent != options.Intent {
+			return nil, errors.New("manager state belongs to a different endpoint/project, parent, creation settings or format; use the matching configuration or a different --manager-state path")
 		}
 		if record.Box == "" {
 			return nil, fmt.Errorf("manager creation is pending or its outcome is unknown (name %q, state %s); inspect Discobox and reconnect with --box ID; no create was retried", record.Name, options.StatePath)
@@ -109,7 +116,7 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		}
 		needsTag = !hasManagerTag(box)
 		progress("Reusing manager " + record.Box)
-	} else {
+	} else if !options.CreateOnly {
 		box, err := c.discoverManager(ctx, options.Parent)
 		if err != nil {
 			return nil, err
@@ -145,7 +152,11 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return nil, err
 		}
-		record = managerRecord{Version: 1, Endpoint: endpoint, Project: project, Name: "mcp-manager-" + hex.EncodeToString(nonce[:]), Parent: options.Parent}
+		name := options.Name
+		if name == "" {
+			name = "mcp-manager-" + hex.EncodeToString(nonce[:])
+		}
+		record = managerRecord{Version: 1, Endpoint: endpoint, Project: project, Name: name, Parent: options.Parent, Intent: options.Intent}
 		if err := reserveManager(options.StatePath, record); err != nil {
 			return nil, fmt.Errorf("reserve manager state before creation: %w", err)
 		}

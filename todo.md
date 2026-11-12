@@ -41,10 +41,24 @@ terminal content and input.
   discovery, adoption guidance, and sandbox-compatible manager creation.
 
 These are scaffolded capabilities, not confirmation of desktop UI compatibility.
-Frontend dependencies and asset builds pass; actual embedded rendering remains
-unverified. The standalone browser terminal and local API connection were
+Frontend dependencies and asset builds pass. Terminal rendering is verified in
+the Codex app. Claude desktop rendering remains unverified.
+The standalone browser terminal and local API connection were
 verified live, including MCP read/send/wait, terminal replay, and adapter restart
 reusing the same manager/exec.
+
+## Manager workspace
+
+- [x] List, explicitly create, connect to and archive managers through text MCP
+  tools, with manager IDs carried into read/send/wait/interrupt calls.
+- [x] Add a chat-flow picker, status cards, create/open/archive actions, and a
+  message composer alongside the raw terminal. See `docs/managers.md`.
+- [x] Scope connection pinning and human input ownership per manager; opening
+  another view never redirects existing sessions or queued input.
+- [x] Journal explicit creation intents under stable request keys; uncertain
+  creation never silently creates a duplicate.
+- [x] Support `--browse` startup without automatically creating a manager.
+- [ ] Verify the expanded manager workspace in native Codex and Claude canvases.
 
 ## Package the terminal UI
 
@@ -148,7 +162,8 @@ go build -o bin/discobox-mcp ./cmd/discobox-mcp
 
 The existing Go tests, race checks, vet, and build passed during scaffolding.
 Frontend dependency installation and the UI asset build now pass, with a committed
-lockfile. Live desktop host rendering has not yet been validated.
+lockfile. Native Codex terminal rendering has been confirmed; the expanded manager
+workspace and native Claude rendering still need verification.
 Iroh transport is scaffolded and tested over loopback;
 two-machine and relay validation remain pending. Remote hosting is not implemented.
 

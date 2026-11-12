@@ -98,7 +98,7 @@ func testServer(t *testing.T, b *fakeBackend) (*Server, *httptest.Server) {
 		t.Fatal(err)
 	}
 	httpServer := b.network.NewUnstartedServer(nil)
-	s, err := New(c, "http://"+httpServer.Listener.Addr().String(), nil, "")
+	s, err := New(c, "http://"+httpServer.Listener.Addr().String(), nil, "", discobox.ManagerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 8 {
+	if len(listed.Tools) != 12 {
 		t.Fatalf("tools: %d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
@@ -230,9 +230,9 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	// Cleanup releases the lease after the upstream attach has closed.
 	deadline := time.Now().Add(time.Second)
 	for {
-		s.mu.Lock()
-		released := s.controller == ""
-		s.mu.Unlock()
+		s.managers[s.Client.Session.Box].mu.Lock()
+		released := s.managers[s.Client.Session.Box].controller == ""
+		s.managers[s.Client.Session.Box].mu.Unlock()
 		if released {
 			break
 		}
