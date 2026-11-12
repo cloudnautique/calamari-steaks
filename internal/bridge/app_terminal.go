@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
@@ -16,6 +17,10 @@ import (
 
 const appTerminalIdle = 90 * time.Second
 const appTerminalBuffer = 1 << 20
+
+// A stopped manager may need tens of seconds to boot. Keep the wait inside
+// the usual 60-second host tool budget, and bound only the initial attach.
+const appTerminalAttachTimeout = 45 * time.Second
 
 type terminalChunk struct {
 	cursor uint64
@@ -69,11 +74,15 @@ func (s *Server) appTools(server *mcp.Server) {
 		stopRequest := context.AfterFunc(ctx, cancel)
 		defer stopRequest()
 		// Stop the startup deadline after dialing without canceling the stream.
-		stopTimer := time.AfterFunc(15*time.Second, cancel)
+		var timedOut atomic.Bool
+		stopTimer := time.AfterFunc(appTerminalAttachTimeout, func() { timedOut.Store(true); cancel() })
 		stream, err := manager.Client.Attach(lifetime)
 		stopTimer.Stop()
 		if err != nil {
 			cancel()
+			if timedOut.Load() {
+				return nil, nil, fmt.Errorf("manager did not finish starting or attaching within %s; reconnect to the same manager once it is running (no input was sent)", appTerminalAttachTimeout)
+			}
 			return nil, nil, err
 		}
 		view := &appTerminal{id: id, manager: manager, stream: stream, cancel: cancel, wake: make(chan struct{})}

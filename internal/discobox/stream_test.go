@@ -3,15 +3,34 @@ package discobox
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/testhttp"
 	"github.com/coder/websocket"
 )
+
+func TestAttachReportsStatusWithoutExposingUpstreamBody(t *testing.T) {
+	network := testhttp.NewNetwork(t)
+	server := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream-secret-body", http.StatusForbidden)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", Session{Project: "p", Box: "b", Exec: "e"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Attach(context.Background())
+	var status *HTTPError
+	if !errors.As(err, &status) || status.Status != http.StatusForbidden || strings.Contains(err.Error(), "upstream-secret-body") {
+		t.Fatalf("unsafe or unhelpful attach error: %v", err)
+	}
+}
 
 func TestAttachReadsFramesAcrossWebSocketMessages(t *testing.T) {
 	network := testhttp.NewNetwork(t)

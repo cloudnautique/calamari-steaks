@@ -107,6 +107,14 @@ The archive API acknowledges the request with an empty `202 Accepted` response;
 the picker follows the desired archive state while the backend finishes it.
 Empty successful archive responses are handled without requiring JSON.
 
+A stopped manager may need tens of seconds to boot when a terminal view attaches.
+The canvas allows 45 seconds for establishing that stream, inside the usual
+60-second MCP tool budget. This startup deadline is removed once connected;
+it does not limit the live terminal's lifetime. If startup still times out,
+reconnect to the same manager once it is running. Input is not sent or replayed
+by the attach operation. HTTP permission/session failures retain their status
+codes without exposing upstream error bodies.
+
 ## Verification
 
 Tests cover scoped chat and input ownership across two managers, independent

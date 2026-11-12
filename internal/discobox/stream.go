@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -44,7 +45,13 @@ func (c *Client) Attach(ctx context.Context) (*Stream, error) {
 		if response != nil && response.Body != nil {
 			response.Body.Close()
 		}
-		return nil, errors.New("could not attach to manager; check that its session is running and reachable")
+		if response != nil {
+			return nil, &HTTPError{Status: response.StatusCode, Path: c.execPath() + "/attach"}
+		}
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("manager terminal attach canceled before it became ready: %w", ctx.Err())
+		}
+		return nil, errors.New("could not attach to manager; it may still be starting or be unreachable; reconnect to the same manager before sending input")
 	}
 	ws.SetReadLimit(maxFrame + 5)
 	return &Stream{conn: websocket.NetConn(ctx, ws, websocket.MessageBinary)}, nil
