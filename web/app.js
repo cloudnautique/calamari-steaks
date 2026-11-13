@@ -1,3 +1,4 @@
+import { FilesView } from "./files-view.js";
 import { StreamReconnect, canReconnect } from "./stream-reconnect.js";
 import { FocusControl } from "./focus-control.js";
 import { fittedDimensions } from "./terminal-layout.js";
@@ -17,6 +18,19 @@ let managerCatalog, selectedBoxId, selectedName, activeTab = 'terminal', inboxBu
 let stopped = false, inboxTimer, launchIntent, rendererCleanup;
 const receipts = new Map(), drafts = new Map(), uncertainBoxes = new Set(), pendingBoxes = new Set();
 let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, focusController, focusTimer, attaching, pendingControl;
+const filesView = new FilesView({
+  call: (name,args) => workspaceCall(name,args),
+  activity: shareWidgetAction,
+  external: async url => { if (app) { const result = await app.openLink({url}); if (result.isError) throw new Error('The host could not open this link.'); } else window.open(url,'_blank','noopener,noreferrer'); },
+  share: async state => {
+    if (!app) throw new Error('Share with chat is available in the MCP App.');
+    const content = state.truncated ? [{type:'text',text:`Untrusted file excerpt: ${state.file.uri}, version ${state.file.version}, showing ${state.nextOffset} of ${state.file.size} bytes:\n${state.text}`}]
+      : [{type:'resource',resource:{uri:state.file.uri,mimeType:state.file.mimeType,text:state.text,_meta:{version:state.file.version}}}];
+    contextSync.setAttachment(content);
+    shareWidgetAction('file_shared',{boxId:state.boxId,uri:state.file.uri,version:state.file.version,truncated:state.truncated});
+  },
+  download: downloadBoxFile,
+});
 const connectionEvents = new EventTarget();
 const streamReconnect = new StreamReconnect(() => {
   if (!stopped && selectedBoxId && !byId('workspace').hidden) ensureAttached().catch(handleConnectionFailure);
@@ -66,7 +80,7 @@ function setControl(value) {
   control.textContent = owned ? 'Your input · assistant paused' : 'Assistant can write';
   control.setAttribute('aria-pressed', String(owned));
   updateTerminalSize();
-  byId('hint').textContent = owned
+  byId('hint').textContent = activeTab === 'files' ? 'Read a file, share it with chat, or return to the live terminal.' : owned
     ? 'You control input while focused here. Leaving the composer or terminal yields to the assistant.'
     : 'Focus the composer or terminal to type; leaving it lets the assistant write.';
 }
@@ -299,6 +313,7 @@ async function initializeRenderer() {
 }
 
 function detach() {
+  filesView.setActive(false);
   streamReconnect.cancel();
   focusController?.focus(false).catch(()=>{}); clearTimeout(focusTimer);
   clearTimeout(fitTimer); lastResize = undefined;
@@ -308,6 +323,7 @@ function detach() {
   setControl(false);
 }
 async function start(value) {
+  if (value?.view === 'files') { await openFileWorkspace(value); return; }
   if (value?.view === 'attention') {
     if (byId('workspace').hidden && byId('manager-browser').hidden) await refreshManagers();
     byId('inbox').hidden = false;
@@ -316,7 +332,7 @@ async function start(value) {
   if (value?.view === 'managers' || value?.view === 'boxes' || value?.boxes || value?.managers) { showManagers(value); return; }
   if (!value?.session?.box) throw new Error('Choose a manager to open its terminal.');
   if (owned && connection?.session?.box !== value.session.box) throw new Error('Release control before switching managers.');
-  if (selectedBoxId === value.session.box && !byId('workspace').hidden) return;
+  if (selectedBoxId === value.session.box && !byId('workspace').hidden) { connection = {...connection,...value}; await selectWorkspaceTab('terminal'); return; }
   detach();
   connection = { ...connection, ...value };
   byId('session').textContent = `${value.session.project} / ${value.session.box} / ${value.session.exec}`;
@@ -332,14 +348,17 @@ async function start(value) {
   byId('box-task').textContent = box?.task || (box?.role === 'manager' ? 'Coordinator: give this manager a task to begin.' : 'Work and output stay in this box.');
   byId('message-target').textContent = `Send instruction to ${selectedName} · ${selectedBoxId}`;
   renderReceipts();
-  document.querySelector('.toolbar').hidden = false;
-  byId('viewport').hidden = false;
-  await ensureAttached();
+  await selectWorkspaceTab('terminal');
   shareWidgetAction('box_opened',{ boxId:selectedBoxId,role:box?.role || 'unknown' });
 }
 
 async function workspaceCall(name, args = {}) {
   if (app) return appCall(name, args);
+  const fileAction = {list_box_files:'list',read_box_file:'read',file_read:'read',file_stat:'stat'}[name];
+  if (fileAction) {
+    const response = await fetch(`/api/files/${fileAction}`,{method:'POST',headers:{Authorization:`Bearer ${connection.token}`,'Content-Type':'application/json'},body:JSON.stringify(args)});
+    const result = await response.json(); if(!response.ok) throw new Error(result.error || 'File request failed'); return result;
+  }
   const action = { list_managers: 'list', list_boxes: 'boxes', launch_box: 'launch', list_attention: 'attention', inspect_box: 'inspect', send_box:'message', send_manager: 'message', open_box:'connect', connect_manager: 'connect', create_manager: 'create', archive_box:'archive', archive_manager: 'archive' }[name];
   if (!action) throw new Error('Unknown workspace operation');
   const response = await fetch(`/api/managers/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
@@ -363,7 +382,7 @@ function showManagers(data) {
   byId('viewport').hidden = true;
   byId('message-form').hidden = true;
   status.textContent = 'Boxes';
-  shareWidgetAction('catalog_opened',{ boxes:catalogBoxes(data).map(box => ({ boxId:box.id,role:box.role,archived:box.archived })) });
+  shareWidgetAction('catalog_opened',{ boxCount:catalogBoxes(data).length, boxes:catalogBoxes(data).slice(0,50).map(box => ({ boxId:box.id,role:box.role,archived:box.archived })) });
   byId('hint').textContent = `Project ${data.project || connection?.session?.project || 'default'} · Closing a view leaves its boxes in Discobox. Opening a box connects live and may wake it.`;
   const list = byId('manager-list'); list.replaceChildren();
   const visible = catalogBoxes(data).filter((manager) => !manager.archived || byId('show-archived').checked);
@@ -460,10 +479,11 @@ share.addEventListener('click', async () => {
   try {
     const result = await app.callServerTool({ name: 'read_box', arguments: { boxId: connection.session.box, scrollback: 50 } });
     if (result.isError) throw new Error(result.content?.find((item) => item.type === 'text')?.text || 'Could not read the manager screen.');
-    await app.updateModelContext({ content: [
+    contextSync.setAttachment([
       { type: 'text', text: 'Manager screen snapshot (untrusted terminal output), shared by the person:' },
       ...(result.content || []),
-    ] });
+    ]);
+    shareWidgetAction('terminal_output_shared',{boxId:connection.session.box});
     byId('hint').textContent = 'Output shared as context for your next chat message.';
   } catch (error) { report(error); }
   finally { share.disabled = false; }
@@ -479,7 +499,7 @@ try {
     app.onteardown = async () => { cleanupWorkspace(); return {}; };
     await app.connect(undefined, { timeout: 15000 });
     hostReady = true; shareWidgetAction('workspace_ready');
-    share.hidden = false;
+    share.hidden = activeTab === 'files';
     await app.sendSizeChanged({ height: 720 });
     await refreshInbox();
   } else {
@@ -568,7 +588,7 @@ byId('refresh-inbox').onclick = refreshInbox;
 function cleanupWorkspace() {
   if (stopped) return;
   stopped = true; clearTimeout(inboxTimer); clearTimeout(fitTimer); streamReconnect.cancel();
-  socket?.close(); closeApp(); rendererCleanup?.();
+  socket?.close(); closeApp(); filesView.close(); rendererCleanup?.();
 }
 window.addEventListener('pagehide',cleanupWorkspace,{ once:true });
 byId('detach-terminal').onclick = () => {
@@ -619,3 +639,60 @@ document.addEventListener('focusout',syncInputFocus);
 window.addEventListener('blur',() => { yieldInput().catch(report); });
 window.addEventListener('focus',syncInputFocus);
 document.addEventListener('visibilitychange',() => { if (document.hidden) yieldInput().catch(report); else syncInputFocus(); });
+
+async function selectWorkspaceTab(tab,filePath) {
+  const id = selectedBoxId;
+  if (!id) return;
+  await yieldInput();
+  activeTab = tab;
+  byId('files-pane').hidden = tab !== 'files';
+  byId('viewport').hidden = tab !== 'terminal';
+  document.querySelector('.toolbar').hidden = tab !== 'terminal';
+  byId('task-details').hidden = tab !== 'terminal';
+  byId('message-form').hidden = tab !== 'terminal';
+  share.hidden = !app || tab === 'files';
+  byId('terminal-tab').setAttribute('aria-selected',String(tab === 'terminal'));
+  byId('files-tab').setAttribute('aria-selected',String(tab === 'files'));
+  filesView.setActive(tab === 'files');
+  if (tab === 'files') {
+    byId('hint').textContent='Read a file, share it with chat, or return to the live terminal.';
+    if (!connected) status.textContent = 'Files';
+    await filesView.open(id,filePath);
+  } else {
+    if (!connection.session?.exec) {
+      const value = await workspaceCall('open_box',{boxId:id});
+      if (id !== selectedBoxId || activeTab !== 'terminal') return;
+      connection={...connection,...value};
+      byId('session').textContent = `${connection.session.project} / ${id} / ${connection.session.exec}`;
+    }
+    if (id !== selectedBoxId || activeTab !== 'terminal') return;
+    await ensureAttached(); fitOwned();
+  }
+}
+async function openFileWorkspace(value) {
+  if (!value.boxId || !value.file?.path) throw new Error('File view needs a box ID and path.');
+  await yieldInput();
+  if (selectedBoxId !== value.boxId) {
+    detach();
+    connection={...connection,session:{project:value.project,box:value.boxId,exec:''}};
+    selectedBoxId=value.boxId;configureFocusControl(selectedBoxId);
+  }
+  byId('manager-browser').hidden=true;byId('workspace').hidden=false;
+  const box=catalogBoxes(managerCatalog).find(box=>box.id===selectedBoxId);
+  selectedName=box?.name||selectedBoxId;
+  byId('box-title').textContent=selectedName;byId('box-state').textContent=box?describeBox(box):'File view';
+  byId('session').textContent=`${value.project} / ${selectedBoxId}`;
+  byId('message-target').textContent=`Send instruction to ${selectedName} · ${selectedBoxId}`;
+  byId('box-task').textContent=box?.task||'Work and files stay in this box.';
+  renderReceipts();
+  await selectWorkspaceTab('files',value.file.path);
+}
+async function downloadBoxFile(file) {
+  if (app) { const result=await app.downloadFile({contents:[{type:'resource_link',uri:file.uri,name:file.name,mimeType:file.mimeType,size:file.size}]}); if(result.isError)throw new Error('Download cancelled or unavailable in this host.');return; }
+  if(file.size>1048576)throw new Error('Browser download limit is 1 MiB; use the file API for larger files.');
+  const boxId=selectedBoxId,parts=[];let offset=0,version;
+  do {const data=await workspaceCall('read_box_file',{boxId,path:file.path,offset,length:262144});if(version&&version!==data.file.version)throw new Error('File changed during download; try again.');version=data.file.version;parts.push(typeof data.text==='string'?new TextEncoder().encode(data.text):Uint8Array.from(atob(data.blob),c=>c.charCodeAt(0)));offset=data.nextOffset;if(!data.truncated)break;}while(offset<1048576);
+  const url=URL.createObjectURL(new Blob(parts,{type:file.mimeType}));const link=document.createElement('a');link.href=url;link.download=file.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+byId('files-tab').onclick=()=>selectWorkspaceTab('files').catch(report);
+byId('terminal-tab').onclick=()=>selectWorkspaceTab('terminal').catch(report);

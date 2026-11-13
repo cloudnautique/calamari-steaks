@@ -193,3 +193,13 @@ enrollment; see `docs/connection.md`. Go builds now require Go 1.27.1 or later.
 - [x] Provide box-named text tools with boxId while preserving manager aliases.
 - [x] Keep authorization, per-box routing and focus ownership checks.
 - [ ] Implement the responsive grouped list from docs/boxes-ux-draft.html.
+
+## Files and artifacts
+
+- [x] Read-only file listing, ranged reads, typed MCP resource links and template.
+- [x] Open regular files in a shared Files/Terminal workspace without needing a harness exec.
+- [x] Sanitized Markdown/text preview, relative links, source view, copy URI and sharing with chat.
+- [x] Version checks, explicit truncation, folder paging and bounded context updates.
+- [x] Host-supported download plus authenticated browser fallback for files up to 1 MiB.
+- [ ] Verify file views and native resource-link clicking in Claude and the OpenAI desktop app.
+- [ ] Larger/streamed downloads, uploads and recursive transfers.

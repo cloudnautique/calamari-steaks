@@ -342,7 +342,7 @@ func (c *Client) CheckManagerParent(ctx context.Context, parent string) error {
 func managerLifecycleError(box map[string]any) error {
 	runtime, _ := box["runtime"].(map[string]any)
 	if state, _ := runtime["desiredState"].(string); state == "archived" || state == "deleted" {
-		return fmt.Errorf("saved manager is %s; restore it in Discobox or explicitly select a different manager", state)
+		return fmt.Errorf("box is %s; restore it in Discobox or select a different box", state)
 	}
 	return nil
 }

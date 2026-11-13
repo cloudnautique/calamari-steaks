@@ -143,6 +143,7 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(s.connection())
 	})))
+	mux.Handle("POST /api/files/{action}", s.auth(http.HandlerFunc(s.filesHTTP)))
 	mux.Handle("POST /api/managers/{action}", s.auth(http.HandlerFunc(s.workspaceHTTP)))
 	mux.HandleFunc("GET /terminal", s.terminal)
 	if mcpHandler != nil {

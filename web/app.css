@@ -80,3 +80,28 @@ html, body, main, #workspace, #viewport, #terminal { min-width: 0; width: 100%; 
 #task-details { flex-shrink: 0; padding: 8px 16px; border-bottom: 1px solid var(--line); max-height: 180px; overflow: auto; }
 #task-details #overview-panel { min-height: 0; padding: 6px 0; }
 #uncertain-delivery { font-size: 12px; color: var(--warn); }
+#files-pane { flex: 1; min-height: 260px; display: grid; grid-template-columns: minmax(180px,28%) minmax(0,1fr); overflow: hidden; border-bottom: 1px solid var(--line); }
+.files-sidebar { min-width: 0; overflow: auto; padding: 12px; border-right: 1px solid var(--line); }
+.files-navigation,.files-location { display: flex; gap: 6px; margin-bottom: 8px; }
+#files-path { min-width: 0; width: 0; flex: 1; font-size: 12px; }
+#files-status { font-size: 11px; overflow-wrap: anywhere; }
+.file-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; text-align: left; margin: 4px 0; padding: 9px; }
+.file-row span { overflow-wrap: anywhere; min-width: 0; }
+.file-row small { white-space: nowrap; color: var(--text-faint); font-size: 10px; }
+.file-row.selected { border-color: var(--magenta); }
+.file-document { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.file-heading { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.file-heading h2 { overflow-wrap: anywhere; }
+#file-location { display: block; font-size: 11px; overflow-wrap: anywhere; margin: 5px 0 10px; color: var(--text-muted); }
+#file-metadata,#file-notice { font-size: 11px; margin: 6px 0 0; overflow-wrap: anywhere; }
+#file-notice { color: var(--warn); }
+#file-uri { width: 100%; font-size: 11px; }
+#file-preview { flex: 1; min-height: 100px; overflow: auto; padding: 16px 20px; line-height: 1.65; font-size: 14px; overflow-wrap: anywhere; }
+#file-preview h1 { font-size: 24px; } #file-preview h2 { font-size: 20px; margin: 22px 0 10px; } #file-preview h3 { font-size: 17px; }
+#file-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 var(--font-mono); background: var(--ink-sunken); border-radius: 6px; padding: 12px; }
+#file-preview code { font-family: var(--font-mono); font-size: .9em; }
+#file-preview a { color: var(--magenta); text-decoration: underline; }
+#file-preview table { border-collapse: collapse; display: block; overflow: auto; max-width: 100%; } #file-preview th,#file-preview td { border: 1px solid var(--line); padding: 7px 10px; }
+#file-preview blockquote { border-left: 2px solid var(--line-bright); padding-left: 14px; margin-left: 0; color: var(--text-muted); }
+#file-more { margin: 8px 16px; align-self: flex-start; }
+@media(max-width:650px) { #files-pane { display: flex; flex-direction: column; min-height: 350px; } .files-sidebar { max-height: 150px; flex-shrink: 0; border-right: 0; border-bottom: 1px solid var(--line); } .file-document { flex: 1; min-height: 200px; } .file-heading { padding: 10px 12px; } #file-preview { padding: 12px; } }
