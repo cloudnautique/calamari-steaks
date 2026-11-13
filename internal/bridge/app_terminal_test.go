@@ -87,7 +87,7 @@ func TestAppResourceIsSelfContainedAndAppToolsAreHidden(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range tools.Tools {
-		if strings.HasPrefix(tool.Name, "terminal_") || strings.HasPrefix(tool.Name, "desktop_") || tool.Name == "file_read" || tool.Name == "file_stat" {
+		if strings.HasPrefix(tool.Name, "terminal_") || strings.HasPrefix(tool.Name, "desktop_") || strings.HasPrefix(tool.Name, "approval_") || tool.Name == "file_read" || tool.Name == "file_stat" {
 			data, _ := json.Marshal(tool.Meta)
 			if !strings.Contains(string(data), `"visibility":["app"]`) {
 				t.Fatalf("terminal tool exposed to model: %s", data)

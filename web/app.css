@@ -128,3 +128,22 @@ header,footer,.workspace-heading,.workspace-tabs,.toolbar,#message-form { flex-s
 #desktop-screen { flex: 1; min-height: 0; min-width: 0; overflow: hidden; outline: none; }
 #desktop-screen:focus-within { outline: 2px solid var(--gold); outline-offset: -2px; }
 #desktop-screen > div { width: 100%; height: 100%; }
+
+.approval-navigation,.approval-find { display: flex; gap: 8px; margin: 10px 0; }
+.approval-find input { flex: 1; width: 0; }
+#approval-list { max-height: 150px; overflow: auto; }
+.approval-row { display: block; width: 100%; text-align: left; margin: 5px 0; }
+.approval-row small { display: block; margin-top: 4px; color: var(--text-muted); overflow-wrap: anywhere; }
+#approval-list-status,.approval-authority { font-size: 11px; color: var(--text-muted); }
+#approval-detail { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; overflow-wrap: anywhere; }
+#approval-detail p { font-size: 12px; }
+#approval-detail code { font-size: 11px; }
+.approval-form { border: 0; padding: 0; margin: 0; min-width: 0; }
+.approval-form label { display: block; font-size: 12px; margin: 10px 0; }
+.approval-form select,.approval-form input { display: block; width: 100%; margin-top: 5px; }
+.approval-part { border: 1px solid var(--line); padding: 10px; border-radius: 6px; margin: 10px 0; }
+.approval-part h4 { margin: 0 0 8px; font-size: 14px; }
+#approval-detail pre { max-height: 180px; overflow: auto; white-space: pre-wrap; font: 11px/1.5 var(--font-mono); }
+.approval-reason { white-space: pre-wrap; max-height: 150px; overflow: auto; }
+.approval-confirm { border: 1px solid var(--gold); padding: 12px; border-radius: 6px; }
+.approval-error,.approval-notice { color: var(--warn); }

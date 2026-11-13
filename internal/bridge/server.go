@@ -18,18 +18,20 @@ import (
 // Server owns a catalog on one configured endpoint/project. Connected manager
 // sessions are pinned independently; callers cannot supply upstream URLs.
 type Server struct {
-	Client         *discobox.Client
-	Origin         string
-	token          string
-	allowedOrigins map[string]bool
-	managersMu     sync.Mutex
-	managers       map[string]*managerConnection
-	managerOptions discobox.ManagerOptions
-	appMu          sync.Mutex
-	appTerminals   map[string]*appTerminal
-	desktopMu      sync.Mutex
-	desktops       map[string]*desktopSession
-	desktopOpening int
+	Client          *discobox.Client
+	Origin          string
+	token           string
+	allowedOrigins  map[string]bool
+	managersMu      sync.Mutex
+	managers        map[string]*managerConnection
+	managerOptions  discobox.ManagerOptions
+	appMu           sync.Mutex
+	appTerminals    map[string]*appTerminal
+	desktopMu       sync.Mutex
+	desktops        map[string]*desktopSession
+	desktopOpening  int
+	approvalMu      sync.Mutex
+	approvalReviews map[string]approvalReview
 }
 
 func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string, options discobox.ManagerOptions) (*Server, error) {

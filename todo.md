@@ -218,3 +218,12 @@ bounded buffering/backpressure, sequenced writes, focus control, scaling, and
 stream cleanup. Real VNC rendering passed in an opaque isolated fixture iframe.
 The sandbox API role denies TCP tunnels, so real task-box validation requires an
 authorized host adapter. Native client validation remains pending; see docs/desktop.md.
+
+Credential approval widget: added open_approval and list_approval_requests with
+settled-history lookup, plus private app-only review/list/decide calls. Separate
+use/delegation decisions, existing credential selection, bounded duration,
+review confirmation, stale-snapshot protection, and single-use review tokens.
+Model context receives status receipts only. No credential values are fetched.
+Sandbox decisions retain existing delegation limits; human-only request kinds
+remain in Discobox. Live denied request was read only; all mutation checks used
+fixtures. Native client validation pending; see docs/approvals.md.

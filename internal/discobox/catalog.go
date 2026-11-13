@@ -15,6 +15,7 @@ import (
 // Manager is a visible box, independent of its role, tags, or connected views.
 // The type name is retained for compatibility with the original adapter.
 type Manager struct {
+	projectID  string
 	ID         string         `json:"id"`
 	Name       string         `json:"name"`
 	State      string         `json:"state"`
@@ -108,6 +109,7 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 		}
 		parentID := entryParent(box)
 		entry := Manager{ID: id, Name: name, State: state, Parent: parentID, Accessible: parent == "" || parentID == parent, Archived: desired == "archived", Role: roleOf(box)}
+		entry.projectID = textField(box, "projectId")
 		config, _ := box["config"].(map[string]any)
 		if entry.Role != managerTagValue {
 			entry.Role = "box"

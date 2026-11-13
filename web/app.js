@@ -1,5 +1,6 @@
 import { FilesView } from "./files-view.js";
 import { DesktopView } from "./desktop-view.js";
+import { ApprovalsView } from "./approvals-view.js";
 import { StreamReconnect, canReconnect } from "./stream-reconnect.js";
 import { FocusControl } from "./focus-control.js";
 import { fittedDimensions, widgetHeight } from "./terminal-layout.js";
@@ -52,6 +53,13 @@ const desktopView = new DesktopView(async(name,args)=>{
   if(!result._meta?.desktop)throw new Error('The host did not deliver private desktop metadata. No graphics were sent to chat.');
   return result._meta.desktop;
 },shareWidgetAction);
+const approvalsView = new ApprovalsView(async(name,args)=>{
+  if(!app)throw new Error('Approval review requires the MCP widget. Open it from your chat client.');
+  const result=await app.callServerTool({name,arguments:args});
+  if(result.isError)throw new Error(result.content?.find(item=>item.type==='text')?.text||'Approval operation failed');
+  if(!result._meta?.approval)throw new Error('The host did not deliver the private approval review.');
+  return result._meta.approval;
+},shareWidgetAction,id=>catalogBoxes(managerCatalog).find(box=>box.id===id)?.name);
 const connectionEvents = new EventTarget();
 const streamReconnect = new StreamReconnect(() => {
   if (!stopped && selectedBoxId && !byId('workspace').hidden) ensureAttached().catch(handleConnectionFailure);
@@ -352,6 +360,10 @@ function detach() {
   setControl(false);
 }
 async function start(value) {
+  if(value?.view==='approvals') {
+    if(byId('workspace').hidden&&byId('manager-browser').hidden)await refreshManagers();
+    await approvalsView.open(value.requestId,value.summary?.status||value.status||'pending');return;
+  }
   if (value?.view === 'desktop') { await openFileWorkspace(value); return; }
   if (value?.view === 'files') { await openFileWorkspace(value); return; }
   if (value?.view === 'attention') {
@@ -523,7 +535,7 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.6.1' }, {}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.7.0' }, {}, { autoResize: false });
     app.onhostcontextchanged=resizeWidget;
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;
@@ -596,7 +608,9 @@ async function refreshInbox() {
       if (item.ttlSeconds) { const duration = document.createElement('p'); duration.textContent = `Requested duration: ${item.ttlSeconds} seconds`; card.append(duration); }
       if (item.scope && Object.keys(item.scope).length) { const scope = document.createElement('pre'); scope.textContent = JSON.stringify(item.scope,null,2); card.append(scope); }
       if (item.observedAt || item.createdAt) { const when = document.createElement('p'); when.className = 'muted'; when.textContent = `Last report: ${new Date(item.observedAt || item.createdAt).toLocaleString()}`; card.append(when); }
-      if (item.action === 'console') { const text = document.createElement('p'); text.textContent = `Open Discobox console → approval inbox. Request ${item.id}. This widget cannot approve using your human identity.`; card.append(text); }
+      if(item.kind==='credential') {
+        const review=document.createElement('button');review.textContent='Review request';review.onclick=()=>approvalsView.open(item.id).catch(report);card.append(review);
+      }else if (item.action === 'console') { const text = document.createElement('p'); text.textContent = `Open Discobox console → approval inbox. Request ${item.id}. This widget uses the MCP server’s API identity.`; card.append(text); }
       const open = document.createElement('button'); open.textContent = 'Inspect box';
       open.onclick = async () => {
         await yieldInput();
@@ -616,12 +630,13 @@ async function refreshInbox() {
 byId('fit-terminal').onclick = fitTerminal;
 byId('review-delivery').onclick = () => { uncertainBoxes.delete(selectedBoxId); byId('uncertain-delivery').hidden = true; byId('send-message').disabled = pendingBoxes.has(selectedBoxId); };
 byId('inbox-button').onclick = () => { byId('inbox').hidden = !byId('inbox').hidden; if (!byId('inbox').hidden) refreshInbox(); };
-byId('close-inbox').onclick = () => { byId('inbox').hidden = true; };
-byId('refresh-inbox').onclick = refreshInbox;
+byId('close-inbox').onclick = () => { byId('inbox').hidden = true; approvalsView.close(); };
+byId('refresh-inbox').onclick = () => approvalsView.active?approvalsView.refresh():refreshInbox();
+byId('approval-history').onclick=()=>approvalsView.open(undefined,'all').catch(report);
 function cleanupWorkspace() {
   if (stopped) return;
   stopped = true; clearTimeout(inboxTimer); clearTimeout(fitTimer); streamReconnect.cancel();
-  socket?.close(); closeApp(); filesView.close(); desktopView.close(); rendererCleanup?.();
+  socket?.close(); closeApp(); filesView.close(); desktopView.close(); approvalsView.close(); rendererCleanup?.();
 }
 window.addEventListener('pagehide',cleanupWorkspace,{ once:true });
 byId('detach-terminal').onclick = () => {

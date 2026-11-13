@@ -332,7 +332,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 		data, err := s.inspectBox(ctx, id)
 		return nil, data, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "list_attention", Meta: ui, Description: "Read pending approval requests and reported blocked/error/done states for accessible boxes. Requests persist in Discobox, independently of this widget. Coverage/warning describe requests this connection cannot see. Approvals are handled in the human Discobox console.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_attention", Meta: ui, Description: "Read pending approval requests and reported blocked/error/done states for accessible boxes. Requests persist in Discobox, independently of this widget. Coverage/warning describe requests this connection cannot see. Use open_approval to inspect a credential request by ID or list_approval_requests for approved/denied history. Widget decisions use this connection’s existing authority; human-only requests remain in Discobox.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.attention(ctx)
 		if err != nil {
 			return nil, nil, err
