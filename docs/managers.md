@@ -290,3 +290,10 @@ and scrolls internally, independent of the box count. The launcher is collapsed
 under Start a new box. Terminal and file workspaces retain their own sizing.
 A 100-box opaque-iframe check verified bounded height, internal scrolling,
 launcher expansion, and a narrow 360px-high host without page overflow.
+
+Workspaces now use the same 520px cap as the catalog when opened inline in
+chat, including hosts that omit displayMode or report a very large maxHeight.
+An explicitly fullscreen workspace uses the host's fixed canvas height; a
+maximum-only expanded canvas requests at most 720px. Returning to inline
+restores the compact cap. Terminal fitting and file/desktop scrolling stay
+inside those bounds.

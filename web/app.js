@@ -9,6 +9,7 @@ import { App } from "@modelcontextprotocol/ext-apps";
 import { Terminal, FitAddon, Ghostty } from "ghostty-web";
 import wasmBytes from "ghostty-web/ghostty-vt.wasm";
 const byId = (id) => document.getElementById(id);
+if(window.parent!==window)document.documentElement.style.setProperty('--app-max-height','520px');
 const status = byId('status');
 const notice = byId('notice');
 const control = byId('control');
@@ -522,7 +523,7 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.6.0' }, {}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.6.1' }, {}, { autoResize: false });
     app.onhostcontextchanged=resizeWidget;
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;

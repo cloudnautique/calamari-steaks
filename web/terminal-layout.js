@@ -15,5 +15,9 @@ export function hostHeight(context) {
 
 export function widgetHeight(context, catalog) {
   const available=hostHeight(context);
-  return catalog?Math.min(520,available ?? 520):(available ?? 720);
+  // Missing displayMode is treated as inline. A host's generous maximum is
+  // permission to use space, not a request to fill the conversation thread.
+  if(catalog || context?.displayMode!=='fullscreen')return Math.min(520,available ?? 520);
+  const fixed=context?.containerDimensions?.height;
+  return Number.isFinite(fixed)&&fixed>0?Math.floor(fixed):Math.min(720,available ?? 720);
 }

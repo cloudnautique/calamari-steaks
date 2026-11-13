@@ -26,5 +26,14 @@ test('catalog height stays bounded even when the host reports a huge available a
   assert.equal(widgetHeight({containerDimensions:{maxHeight:20000}},true),520);
   assert.equal(widgetHeight({containerDimensions:{height:360}},true),360);
   assert.equal(widgetHeight(undefined,true),520);
-  assert.equal(widgetHeight({containerDimensions:{height:800}},false),800);
+  assert.equal(widgetHeight({containerDimensions:{height:800}},false),520);
+});
+
+test('workspaces stay compact in chat and follow explicit expanded canvas sizing',()=>{
+  assert.equal(widgetHeight({displayMode:'inline',containerDimensions:{maxHeight:20000}},false),520);
+  assert.equal(widgetHeight({containerDimensions:{maxHeight:20000}},false),520);
+  assert.equal(widgetHeight({containerDimensions:{height:360}},false),360);
+  assert.equal(widgetHeight({displayMode:'fullscreen',containerDimensions:{height:980}},false),980);
+  assert.equal(widgetHeight({displayMode:'fullscreen',containerDimensions:{maxHeight:20000}},false),720);
+  assert.equal(widgetHeight({displayMode:'inline',containerDimensions:{height:980}},false),520);
 });
