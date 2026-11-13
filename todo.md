@@ -227,3 +227,12 @@ Model context receives status receipts only. No credential values are fetched.
 Sandbox decisions retain existing delegation limits; human-only request kinds
 remain in Discobox. Live denied request was read only; all mutation checks used
 fixtures. Native client validation pending; see docs/approvals.md.
+
+Terminal clipboard and navigation: removed the separate instruction composer.
+Added capture-phase native clipboard handling, bounded bracketed paste, and an
+explicit Paste button with a transient fallback dialog when clipboard reads are
+blocked. Added select_view as an app tool and show_box_view as a server fallback;
+view selection respects human input ownership and does not focus or type.
+Opaque-frame checks cover missing key codes, single paste, Unicode/multiline,
+clipboard-denied fallback, context privacy, and app-tool view changes. Native
+clipboard/client app-tool exposure remain to verify; see docs/terminal-input.md.

@@ -242,3 +242,13 @@ func safeProgram(raw any) map[string]any {
 	}
 	return result
 }
+
+// BoxAccess checks identity, parent authority and lifecycle without waking or
+// resolving a terminal. UI navigation may open a Files view before a harness.
+func (c *Client) BoxAccess(ctx context.Context, id, parent string) error {
+	box, err := c.managerBox(ctx, id, parent)
+	if err != nil {
+		return err
+	}
+	return managerLifecycleError(box)
+}

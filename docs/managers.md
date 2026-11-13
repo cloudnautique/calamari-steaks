@@ -85,8 +85,7 @@ The create control starts a manager using the project's configured harness and
 pool. Managers requiring adoption are visible but cannot be opened here until
 the relevant approval is obtained.
 
-Opening a card displays the live Ghostty terminal. Type directly; the optional
-Send an instruction control expands a composer for whole-message submission.
+Opening a card displays the live Ghostty terminal. Type or paste directly.
 Focus claims input control and leaving the input yields it, letting chat
 send instructions. Input ownership belongs to each manager: controlling A
 does not block chat from working with B. The Managers button returns to the
@@ -146,7 +145,7 @@ live terminal immediately. Displaying the widget attaches to the pinned session
 and can wake its box. Task details are collapsible; the terminal remains live.
 There is no output refresh button or separate snapshot view. New bytes arrive
 through the MCP App bridge, or WebSocket in the standalone browser. Opening a
-viewer does not claim input; focusing the composer or terminal does. A failed
+viewer does not claim input; focusing the terminal does. A failed
 send retains its text and requires the person to check the live output before
 allowing resubmission. Input is never automatically replayed.
 
@@ -212,7 +211,7 @@ and clearing the active selection without writing to any box.
 ## Focus-driven input handoff
 
 The person no longer needs a separate Take control click. Focusing the box
-composer or raw terminal claims that view's input ownership; leaving the input
+raw terminal claims that view's input ownership; leaving the input
 areas, hiding the terminal, switching windows, or hiding the document yields it.
 The input indicator shows whether the person or assistant can write. Send and
 already queued keystrokes finish before the release, so a blur cannot split a
@@ -220,14 +219,14 @@ submission. A pending claim followed by blur releases after the claim returns.
 Two writers still cannot interleave terminal input. Focus is not a signal that
 an agent operation has finished, and commands already running continue.
 
-Focusing an unattached composer attaches to the selected session first and may
+Focusing an unattached terminal attaches to the selected session first and may
 wake its box. Observing output does not claim input. Terminal focus fits the
 shared grid to the visible pane; observers retain the existing session width.
 Hidden or collapsed panels cannot resize the PTY. Visible resizes are debounced
 and repeated dimensions are skipped; the toolbar shows columns and rows.
 
 The focus handoff was checked in the opaque iframe through the live MCP bridge:
-composer focus/blur, terminal focus and fit, and yielding on terminal hide. No
+terminal focus/blur and fit, and yielding on terminal hide. No
 instructions were sent in that check. Unit tests cover blur during a pending
 claim, release after a pending submission, failure without replay, and rejecting
 hidden/invalid layout measurements.
@@ -300,9 +299,15 @@ restores the compact cap. Terminal fitting and file/desktop scrolling stay
 inside those bounds.
 
 The terminal workspace now keeps session IDs under Task & session details and
-Fit/Detach/Reconnect under Options. The whole-instruction composer is collapsed
-by default, with raw terminal typing as the primary input. Closing the composer
-yields its input lease. The shell can follow the host's light theme while the
+Fit/Detach/Reconnect under Options. The whole-instruction composer has been removed. Raw terminal typing and paste
+are the input, with clipboard handling and model view selection described in
+terminal-input.md. The shell can follow the host's light theme while the
 terminal keeps a dark ANSI palette. An opaque-frame check verified direct typing,
 composer focus/close, a 257px terminal area inside the 520px inline widget, and
 using the full 1100px maximum-only expanded canvas without page overflow.
+
+Clipboard shortcuts/events now bypass Ghostty key encoding and reach its
+bracketed paste API once. The Paste toolbar button provides a transient dialog
+when the host denies direct clipboard reads. Model view selection is available
+through an app select_view tool, with show_box_view as a server fallback; neither
+takes keyboard ownership and both respect active human input. See terminal-input.md.

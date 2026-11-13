@@ -36,9 +36,6 @@ input, textarea { background: var(--ink); border: 1px solid var(--line-bright); 
 .manager-card strong { display: block; margin-bottom: 5px; }
 .manager-card code { color: var(--text-faint); font-size: 11px; overflow-wrap: anywhere; }
 .manager-state { display: block; color: var(--text-muted); font-size: 12px; margin-top: 6px; }
-#message-form { display: flex; gap: 8px; padding: 10px var(--space-4); border-top: 1px solid var(--line); }
-#message { flex: 1; resize: vertical; font-size: 13px; }
-#message-form button { align-self: center; }
 /* Task launcher and workspace share the same controls in canvas and browser. */
 main { position: relative; }
 h2 { font-size: 16px; margin: 0; }
@@ -58,9 +55,6 @@ summary { cursor: pointer; font-size: 13px; }
 #overview-panel { flex: 1; min-height: 200px; overflow: auto; padding: 12px 16px; }
 #box-task { white-space: pre-wrap; font-size: 13px; }
 #output { background: var(--ink-sunken); border: 1px solid var(--line); border-radius: var(--radius-key); padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--font-mono); min-height: 140px; }
-#message-form { display: block; }
-#message-target { display: block; color: var(--text-muted); font-size: 12px; margin-bottom: 7px; overflow-wrap: anywhere; }
-.composer { display: flex; gap: 8px; }
 #inbox { position: absolute; z-index: 5; top: 56px; right: 0; bottom: 0; width: min(480px,100%); background: var(--ink-raised); border-left: 1px solid var(--line-bright); box-shadow: -15px 0 40px #0006; padding: 18px; overflow: auto; }
 .attention-card { border: 1px solid var(--line); border-radius: var(--radius-key); padding: 14px; margin: 12px 0; }
 .attention-card h3 { margin: 0 0 6px; font-size: 14px; }
@@ -77,7 +71,7 @@ html, body, main, #workspace, #viewport, #terminal { min-width: 0; width: 100%; 
 #viewport { overflow-x: auto; }
 #terminal-size { font-size: 11px; white-space: nowrap; }
 .workspace-heading > div { min-width: 0; }
-header,footer,.workspace-heading,.workspace-tabs,.toolbar,#message-form { flex-shrink: 0; }
+header,footer,.workspace-heading,.workspace-tabs,.toolbar { flex-shrink: 0; }
 #notice { flex-shrink: 0; max-height: 96px; overflow: auto; }
 @media(max-height:650px) {
   .workspace-heading { padding: 8px 12px; }
@@ -162,8 +156,9 @@ header { padding: 8px 12px; }
 .terminal-options > .actions { position: absolute; z-index: 8; right: 0; top: calc(100% + 4px); min-width: 160px; padding: 8px; flex-direction: column; align-items: stretch; background: var(--ink-raised); border: 1px solid var(--line-bright); border-radius: 6px; box-shadow: 0 8px 24px #0004; }
 #task-details { padding: 6px 12px; }
 #task-details #session { display: block; margin-top: 8px; }
-#message-details { flex-shrink: 0; border-top: 1px solid var(--line); max-height: 40%; overflow: auto; padding: 6px 12px; }
-#message-details > summary { font-size: 12px; color: var(--text-muted); }
-#message-details #message-form { padding: 8px 0 0; border-top: 0; }
 footer { padding: 6px 12px; }
-#message-details:not([open]) #message-form { display: none; }
+
+#paste-dialog { color: var(--text); background: var(--ink-raised); border: 1px solid var(--line-bright); border-radius: 8px; max-width: min(460px,90vw); }
+#paste-dialog p { font-size: 12px; }
+#paste-text { width: 100%; display: block; margin: 12px 0; }
+#paste-dialog::backdrop { background: #0008; }
