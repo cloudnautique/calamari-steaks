@@ -3,7 +3,7 @@
 const MAX_CONTEXT = 16384;
 const MAX_ATTACHMENT = 65536;
 function bytes(value) { return new TextEncoder().encode(JSON.stringify(value)).length; }
-function boundAttachment(content) {
+export function boundAttachment(content) {
   if(bytes(content)<=MAX_ATTACHMENT)return content;
   const resource=content.find(item=>item.type==='resource')?.resource;
   const uri=resource?.uri || '';

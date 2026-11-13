@@ -203,3 +203,10 @@ enrollment; see `docs/connection.md`. Go builds now require Go 1.27.1 or later.
 - [x] Host-supported download plus authenticated browser fallback for files up to 1 MiB.
 - [ ] Verify file views and native resource-link clicking in Claude and the OpenAI desktop app.
 - [ ] Larger/streamed downloads, uploads and recursive transfers.
+
+Canvas follow-up: explicit file/terminal sharing now uses ui/message with a
+visible user message, bounded text content, acknowledgement/error feedback, and
+a copyable fallback prompt when unsupported. Background context is metadata only.
+Terminal fitting follows pane and host geometry without taking keyboard control;
+a different human controller prevents passive resize. Short panes no longer
+force a 240px terminal or 420px page minimum. Desktop confirmation pending.

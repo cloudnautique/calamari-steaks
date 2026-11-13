@@ -88,6 +88,23 @@ func (s *managerConnection) writeAs(owner string, write func() error) error {
 	return write()
 }
 
+// Geometry does not require a keyboard claim. A passive view may fit while
+// nobody is typing, but must not resize underneath another human controller.
+func (s *managerConnection) resizeAs(view string, resize func() error) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.archived {
+		return false, errors.New("manager is archived; choose another manager")
+	}
+	if s.controller != "" && s.controller != view {
+		return false, nil
+	}
+	if err := resize(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *managerConnection) claim(owner string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

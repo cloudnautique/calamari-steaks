@@ -1,8 +1,9 @@
 import { FilesView } from "./files-view.js";
 import { StreamReconnect, canReconnect } from "./stream-reconnect.js";
 import { FocusControl } from "./focus-control.js";
-import { fittedDimensions } from "./terminal-layout.js";
+import { fittedDimensions, hostHeight } from "./terminal-layout.js";
 import { ContextSync } from "./context.js";
+import { sendToChat } from "./chat-share.js";
 import { App } from "@modelcontextprotocol/ext-apps";
 import { Terminal, FitAddon, Ghostty } from "ghostty-web";
 import wasmBytes from "ghostty-web/ghostty-vt.wasm";
@@ -26,8 +27,8 @@ const filesView = new FilesView({
     if (!app) throw new Error('Share with chat is available in the MCP App.');
     const content = state.truncated ? [{type:'text',text:`Untrusted file excerpt: ${state.file.uri}, version ${state.file.version}, showing ${state.nextOffset} of ${state.file.size} bytes:\n${state.text}`}]
       : [{type:'resource',resource:{uri:state.file.uri,mimeType:state.file.mimeType,text:state.text,_meta:{version:state.file.version}}}];
-    contextSync.setAttachment(content);
     shareWidgetAction('file_shared',{boxId:state.boxId,uri:state.file.uri,version:state.file.version,truncated:state.truncated});
+    return sendToChat(app,`Please read ${state.file.path} from Discobox box ${state.boxId} so we can discuss it. Resource: ${state.file.uri}. Version: ${state.file.version}.${state.truncated?' The attached preview is an excerpt; read_box_file can retrieve more.':''}`,content);
   },
   download: downloadBoxFile,
 });
@@ -46,6 +47,7 @@ function handleConnectionFailure(error) {
 function liveConnected() {
   streamReconnect.cancel();
   status.textContent = 'Terminal live';
+  scheduleFit();
   if (inputFocused()) focusController?.focus(true).catch(report);
 }
 function assertSameSession(session) {
@@ -96,11 +98,15 @@ function send(message) {
     // input stops the queue; reconnecting never replays it.
     const operation = inputQueue.then(async () => {
       if (appTerminal !== id) { if (['input','message','claim'].includes(message.type)) throw new Error('Terminal changed; input was not sent.'); return; }
-      await appCall('terminal_action', { terminalId: id, ...action });
+      const result=await appCall('terminal_action', { terminalId: id, ...action });
+      if(message.type==='resize' && appTerminal===id) {
+        if(result.resized) { terminal.resize(message.cols,message.rows); updateTerminalSize(); }
+        else { lastResize=undefined; byId('hint').textContent='Another view controls the terminal; its dimensions are preserved.'; }
+      }
       if (message.type === 'claim' || message.type === 'release') {
         setControl(message.type === 'claim');
         control.disabled = false;
-        if (owned) fitOwned();
+        if (owned) fitTerminal();
       }
     });
     inputQueue = operation.catch((error) => { if (appTerminal === id) disconnectApp(error); });
@@ -125,26 +131,24 @@ function send(message) {
 function updateTerminalSize() {
   if (!terminal) return;
   byId('terminal-size').textContent = `${terminal.cols} columns × ${terminal.rows} rows`;
-  byId('fit-terminal').disabled = !owned || !connected;
-  byId('fit-terminal').title = owned ? 'Fit this session to the visible pane' : 'Focus the terminal to fit it to this pane';
+  byId('fit-terminal').disabled = !connected;
+  byId('fit-terminal').title = 'Fit this session to the visible pane';
 }
-function fitOwned() {
+function fitTerminal() {
   clearTimeout(fitTimer);
   if (!terminal) return;
   const viewport = byId('viewport');
-  const visible = activeTab === 'terminal' && !viewport.hidden && !byId('workspace').hidden;
-  const dimensions = fittedDimensions({ owned,connected,visible,width:viewport.clientWidth,height:viewport.clientHeight,proposal:visible ? fit.proposeDimensions() : undefined });
+  const visible = !document.hidden && activeTab === 'terminal' && !viewport.hidden && !byId('workspace').hidden;
+  const dimensions = fittedDimensions({ connected,visible,width:viewport.clientWidth,height:viewport.clientHeight,proposal:visible ? fit.proposeDimensions() : undefined });
   if (!dimensions) return;
   const { cols, rows } = dimensions, key = `${cols}:${rows}`;
   if (key === lastResize) return;
   lastResize = key;
-  terminal.resize(cols,rows);
-  updateTerminalSize();
-  send({ type:'resize',cols,rows });
+  send({ type:'resize',cols,rows })?.catch(report);
 }
 function scheduleFit() {
   clearTimeout(fitTimer);
-  fitTimer = setTimeout(fitOwned,100);
+  fitTimer = setTimeout(fitTerminal,100);
 }
 
 // No automatic reconnect or input replay: a failed write may already have run.
@@ -168,6 +172,10 @@ function attach() {
     try {
       const message = JSON.parse(data);
       switch (message.type) {
+        case 'resized':
+          if(message.resized){terminal.resize(message.cols,message.rows);updateTerminalSize()}
+          else {lastResize=undefined;byId('hint').textContent='Another view controls the terminal; its dimensions are preserved.'}
+          break;
         case 'connected':
           connected = true;
           assertSameSession(message.session);
@@ -180,7 +188,7 @@ function attach() {
           pendingControl?.resolve(); pendingControl = undefined;
           setControl(message.owned);
           control.disabled = false;
-          if (owned) fitOwned();
+          if (owned) fitTerminal();
           break;
         case 'sent':
           pendingMessage?.resolve(); pendingMessage = undefined;
@@ -479,28 +487,37 @@ share.addEventListener('click', async () => {
   try {
     const result = await app.callServerTool({ name: 'read_box', arguments: { boxId: connection.session.box, scrollback: 50 } });
     if (result.isError) throw new Error(result.content?.find((item) => item.type === 'text')?.text || 'Could not read the manager screen.');
-    contextSync.setAttachment([
+    const content = [
       { type: 'text', text: 'Manager screen snapshot (untrusted terminal output), shared by the person:' },
       ...(result.content || []),
-    ]);
+    ];
     shareWidgetAction('terminal_output_shared',{boxId:connection.session.box});
-    byId('hint').textContent = 'Output shared as context for your next chat message.';
-  } catch (error) { report(error); }
+    byId('hint').textContent = await sendToChat(app,`Please review this terminal snapshot from Discobox box ${connection.session.box} so we can discuss it. This is terminal output, not a complete file.`,content);
+  } catch (error) { report(error.copyPrompt ? new Error(`${error.message}\n${error.copyPrompt}`) : error); }
   finally { share.disabled = false; }
 });
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.3.0' }, {}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.5.1' }, {}, { autoResize: false });
+    const applyHostLayout=context=>{
+      const height=hostHeight(context);
+      if(height)document.documentElement.style.setProperty('--app-max-height',`${height}px`);
+      else document.documentElement.style.removeProperty('--app-max-height');
+      scheduleFit();
+    };
+    app.onhostcontextchanged=()=>applyHostLayout(app.getHostContext());
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;
       if (value?.session || value?.view) start(value).catch(report);
     };
     app.onteardown = async () => { cleanupWorkspace(); return {}; };
     await app.connect(undefined, { timeout: 15000 });
+    applyHostLayout(app.getHostContext());
     hostReady = true; shareWidgetAction('workspace_ready');
     share.hidden = activeTab === 'files';
-    await app.sendSizeChanged({ height: 720 });
+    const desiredHeight=hostHeight(app.getHostContext()) || 720;
+    await app.sendSizeChanged({ height: desiredHeight });
     await refreshInbox();
   } else {
     const token = new URLSearchParams(location.hash.slice(1)).get('token');
@@ -580,7 +597,7 @@ async function refreshInbox() {
     if (!stopped) inboxTimer = setTimeout(refreshInbox,15000);
   }
 }
-byId('fit-terminal').onclick = fitOwned;
+byId('fit-terminal').onclick = fitTerminal;
 byId('review-delivery').onclick = () => { uncertainBoxes.delete(selectedBoxId); byId('uncertain-delivery').hidden = true; byId('send-message').disabled = pendingBoxes.has(selectedBoxId); };
 byId('inbox-button').onclick = () => { byId('inbox').hidden = !byId('inbox').hidden; if (!byId('inbox').hidden) refreshInbox(); };
 byId('close-inbox').onclick = () => { byId('inbox').hidden = true; };
@@ -666,7 +683,7 @@ async function selectWorkspaceTab(tab,filePath) {
       byId('session').textContent = `${connection.session.project} / ${id} / ${connection.session.exec}`;
     }
     if (id !== selectedBoxId || activeTab !== 'terminal') return;
-    await ensureAttached(); fitOwned();
+    await ensureAttached(); fitTerminal();
   }
 }
 async function openFileWorkspace(value) {

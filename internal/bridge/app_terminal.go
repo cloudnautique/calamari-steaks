@@ -170,12 +170,13 @@ func (s *Server) appTools(server *mcp.Server) {
 		case "message":
 			err = view.manager.writeAs(view.id, func() error { _, err := view.manager.Client.Send(ctx, input.Text, true); return err })
 		case "resize":
-			err = view.manager.writeAs(view.id, func() error {
+			resized, resizeErr := view.manager.resizeAs(view.id, func() error {
 				if err := view.stream.Resize(input.Cols, input.Rows); err != nil {
 					return err
 				}
 				return view.stream.Write(discobox.Repaint, nil)
 			})
+			return nil, map[string]any{"ok": resizeErr == nil, "resized": resized}, resizeErr
 		default:
 			err = fmt.Errorf("unknown terminal action")
 		}

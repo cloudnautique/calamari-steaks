@@ -225,6 +225,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 			t.Fatal(ctx.Err())
 		}
 	}
+	read("resized")
 	write(map[string]any{"type": "release"})
 	read("control")
 	call("send_manager", map[string]any{"text": "continue", "submit": true}, false)

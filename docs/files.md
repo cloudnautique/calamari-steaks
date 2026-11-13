@@ -2,7 +2,7 @@
 
 The first Files view is read-only. It browses directories, renders Markdown or
 plain text, opens relative file links within the same box, exposes a canonical
-MCP resource link, and shares file contents with chat on request. Raw HTML and
+MCP resource link, and sends file contents to the main chat on request. Raw HTML and
 external images are not rendered. Source view shows the exact text.
 
 Reconnect the desktop MCP connection after upgrading so its tool list is fresh.
@@ -63,13 +63,24 @@ iframe cannot write to the clipboard. No OS URL handler is registered.
 
 ## Context and transport limits
 
-Explicit Share with chat attaches the preview and its box/path/version identity
-to app context. Partial previews are labeled excerpts. Context attachments are
-bounded to 64 KiB and larger ones become explicit excerpts with instructions to
-read the file through its tools. Subsequent selection context retains the share.
-Only one pending context update is kept while the host is slow; recent receipts
-are coalesced instead of building an unbounded promise queue. The complete file
-is not duplicated in model-facing content and structured output.
+Explicit Send to chat sends a visible user message through the host's
+`ui/message` bridge with the file and its box/path/version identity. Text blocks
+support hosts that do not accept embedded resources. Partial and oversized
+previews are labeled excerpts; the payload is bounded to 64 KiB. Background
+selection updates contain metadata and receipts, not another copy of the file.
+Only one pending context update is kept while the host is slow.
+
+The button waits for host acknowledgement, reports rejection, and never retries
+uncertain delivery. A host without message support, or one rejecting the message,
+shows a copyable prompt to request the same file in chat. Terminal output uses
+the same visible-message mechanism. Native hosts determine whether accepting a
+message immediately starts an assistant response.
+
+The workspace respects fixed or maximum host height and observes the terminal
+pane's actual dimensions. Visible terminal views fit without claiming keyboard
+control. Geometry updates serialize with input; a view cannot resize while
+another human holds this integration's terminal control. Hidden Files/catalog
+views do not resize the terminal. Focus still governs who may type.
 
 The opaque canvas iframe never fetches localhost or Discobox directly. It calls
 MCP tools through the host bridge, as the terminal does. The standalone page uses

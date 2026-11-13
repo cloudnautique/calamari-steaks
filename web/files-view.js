@@ -14,7 +14,14 @@ export class FilesView {
     $('files-more').onclick=()=>this.model.moreEntries();
     $('file-more').onclick=()=>this.model.more();
     $('file-raw').onclick=()=>{this.raw=!this.raw;this.signature='';this.render(this.model.state)};
-    $('file-share').onclick=()=>this.perform(()=>this.share(this.model.state));
+    $('file-share').onclick=async()=>{
+      if(this.sharing)return;
+      const state={...this.model.state};this.sharing=true;
+      this.shareNotice={uri:state.file.uri,message:'Sending to chat…'};this.render(this.model.state);
+      try {this.shareNotice={uri:state.file.uri,message:await this.share(state)}}
+      catch(error){this.shareNotice={uri:state.file.uri,message:error.message,prompt:error.copyPrompt}}
+      finally{this.sharing=false;this.render(this.model.state)}
+    };
     $('file-download').onclick=()=>this.perform(()=>this.download(this.model.state.file));
     $('file-copy').onclick=()=>this.perform(async()=>{try{await navigator.clipboard.writeText(this.model.state.file.uri);$('file-notice').textContent='Resource URI copied.'}catch{$('file-uri').hidden=false;$('file-uri').focus();$('file-uri').select();$('file-notice').textContent='Copy the selected resource URI.'}});
     $('file-preview').onclick=event=>{
@@ -40,10 +47,13 @@ export class FilesView {
     list.scrollTop=listScroll;
     const file=state.file;
     $('file-title').textContent=file?.name||'Choose a file';$('file-location').textContent=file?.path||'Browse a folder, then open a report or source file.';
-    $('file-notice').textContent=state.error||'';$('file-uri').value=file?.uri||'';
+    const shared=this.shareNotice?.uri===file?.uri?this.shareNotice:null;
+    $('file-notice').textContent=state.error||shared?.message||'';$('file-uri').value=file?.uri||'';
+    $('file-chat-fallback').hidden=!shared?.prompt;$('file-chat-fallback').value=shared?.prompt||'';
     $('file-metadata').textContent=state.loading?'Reading file…':file?.version?`${file.size.toLocaleString()} bytes · ${file.mimeType==='text/markdown'?'Markdown':file.mimeType} · ${state.truncated?`showing ${state.nextOffset.toLocaleString()} bytes · `:''}${file.modifiedAt?'Updated '+new Date(file.modifiedAt).toLocaleString():'Current file'}`:'';
     for(const id of ['file-copy','file-share','file-download','file-raw'])$(id).disabled=!file?.version||state.loading;
-    $('file-share').disabled ||= !!state.error || !state.text;
+    $('file-share').disabled ||= !!state.error || !state.text || this.sharing;
+    $('file-share').textContent=this.sharing?'Sending…':'Send to chat';
     $('file-raw').disabled ||= !file || !/\.(md|markdown)$/i.test(file.path);
     $('file-more').hidden=!state.truncated;$('file-more').disabled=state.loading;
     $('file-raw').textContent=this.raw?'Rendered':'Source';

@@ -52,12 +52,21 @@ func TestAppTerminalUsesMCPForReplayAndOwnership(t *testing.T) {
 		call("terminal_action", map[string]any{"terminalId": id, "action": action, "data": base64.StdEncoding.EncodeToString([]byte("x"))}, wantError)
 	}
 	action("input", true)
+	resized := call("terminal_action", map[string]any{"terminalId": id, "action": "resize", "cols": 110, "rows": 32}, false)
+	if resized["resized"] != true {
+		t.Fatal("visible viewer could not fit without claiming input")
+	}
+	action("input", true)
 	action("claim", false)
 	action("input", false)
 	call("send_manager", map[string]any{"text": "must be blocked", "submit": true}, true)
 	observer := call("terminal_open", map[string]any{}, false)["terminalId"].(string)
 	defer s.closeAppTerminal(observer)
 	call("terminal_action", map[string]any{"terminalId": observer, "action": "claim"}, true)
+	resized = call("terminal_action", map[string]any{"terminalId": observer, "action": "resize", "cols": 60, "rows": 12}, false)
+	if resized["resized"] != false {
+		t.Fatal("observer resized underneath a human controller")
+	}
 	action("release", false)
 	call("send_manager", map[string]any{"text": "now allowed", "submit": true}, false)
 	action("close", false)

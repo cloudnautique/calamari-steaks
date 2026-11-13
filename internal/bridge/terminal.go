@@ -127,12 +127,16 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 				err = sendJSON(ctx, ws, map[string]any{"type": "sent"})
 			}
 		case "resize":
-			err = manager.writeAs(owner, func() error {
+			resized, resizeErr := manager.resizeAs(owner, func() error {
 				if err := stream.Resize(message.Cols, message.Rows); err != nil {
 					return err
 				}
 				return stream.Write(discobox.Repaint, nil)
 			})
+			err = resizeErr
+			if err == nil {
+				err = sendJSON(ctx, ws, map[string]any{"type": "resized", "resized": resized, "cols": message.Cols, "rows": message.Rows})
+			}
 		default:
 			ws.Close(websocket.StatusPolicyViolation, "unknown terminal action")
 			return
