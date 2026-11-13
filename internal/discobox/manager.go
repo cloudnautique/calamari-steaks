@@ -255,10 +255,6 @@ func roleOf(box map[string]any) string {
 	role, _ := tags[managerTagKey].(string)
 	return role
 }
-func hasWorkspaceTag(box map[string]any) bool {
-	role := roleOf(box)
-	return role == "box" || role == managerTagValue
-}
 func hasManagerTag(box map[string]any) bool {
 	meta, _ := box["meta"].(map[string]any)
 	tags, _ := meta["tags"].(map[string]any)

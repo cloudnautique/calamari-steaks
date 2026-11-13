@@ -31,7 +31,7 @@ type Inbox struct {
 func textField(m map[string]any, key string) string { value, _ := m[key].(string); return value }
 
 func (c *Client) Attention(ctx context.Context, parent string) (Inbox, error) {
-	inbox := Inbox{Items: []Attention{}, Coverage: "box-specific approval requests and reported box status", Warning: "Only requests tied to accessible integration boxes are shown. Project-wide credential refresh requests remain in the Discobox console."}
+	inbox := Inbox{Items: []Attention{}, Coverage: "box-specific approval requests and reported box status", Warning: "Only requests tied to accessible boxes are shown. Project-wide credential refresh requests remain in the Discobox console."}
 	boxes, err := c.ListBoxes(ctx, parent)
 	if err != nil {
 		return inbox, err

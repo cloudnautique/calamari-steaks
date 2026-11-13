@@ -74,3 +74,5 @@ html, body, main, #workspace, #viewport, #terminal { min-width: 0; width: 100%; 
 #viewport { overflow-x: auto; }
 #terminal-size { font-size: 11px; white-space: nowrap; }
 .workspace-heading > div { min-width: 0; }
+
+.role-badge { display: inline-block; margin-left: 8px; padding: 2px 6px; font-size: 10px; font-weight: 400; color: var(--magenta); border: 1px solid var(--line); border-radius: 10px; }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,6 +29,10 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 	boxes["alpha"] = managerBox("alpha", "caller")
 	boxes["beta"] = managerBox("beta", "caller")
 	boxes["foreign"] = managerBox("foreign", "someone-else")
+	boxes["external"] = managerBox("external", "caller")
+	delete(boxes["external"], "meta") // Created outside the adapter, with no role tag.
+	boxes["external-foreign"] = managerBox("external-foreign", "someone-else")
+	delete(boxes["external-foreign"], "meta")
 	creates := 0
 	primary := map[string]int{}
 	inputs := map[string]int{}
@@ -166,7 +171,7 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 		return data
 	}
 	boxCatalog := call("list_boxes", map[string]any{}, false)
-	if len(boxCatalog["boxes"].([]any)) != 3 || boxCatalog["listingScope"] == nil || boxCatalog["roleMeaning"] == nil {
+	if len(boxCatalog["boxes"].([]any)) != 5 || boxCatalog["listingScope"] == nil || boxCatalog["roleMeaning"] == nil {
 		t.Fatal("box listing lost its scope or role semantics")
 	}
 	if _, legacy := boxCatalog["managers"]; legacy {
@@ -176,6 +181,42 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 	if len(listed["managers"].([]any)) != 3 || creates != 0 {
 		t.Fatal("listing created or lost managers")
 	}
+	external := call("open_box", map[string]any{"boxId": "external"}, false)
+	if external["boxId"] != "external" || external["view"] != "workspace" {
+		t.Fatal("untagged box did not open directly")
+	}
+	call("open_box", map[string]any{"boxId": "external-foreign"}, true)
+	call("open_box", map[string]any{"boxId": "external", "managerId": "alpha"}, true)
+	call("read_box", map[string]any{"boxId": "../alpha"}, true)
+	call("send_box", map[string]any{"boxId": "external-foreign", "text": "no", "submit": true}, true)
+	call("send_box", map[string]any{"text": "missing target", "submit": true}, true)
+	output := call("read_box", map[string]any{"boxId": "external"}, false)
+	if output["lines"].([]any)[0] != "external ready" {
+		t.Fatal("read was sent to another box")
+	}
+	sent := call("send_box", map[string]any{"boxId": "external", "text": "direct task", "submit": true}, false)
+	call("wait_box", map[string]any{"boxId": "external", "after": sent["resumeAfter"], "timeoutSeconds": 1}, false)
+	call("interrupt_box", map[string]any{"boxId": "external"}, false)
+	directView := call("terminal_open", map[string]any{"managerId": "external"}, false)["terminalId"].(string)
+	call("terminal_action", map[string]any{"terminalId": directView, "action": "claim"}, false)
+	call("send_box", map[string]any{"boxId": "external", "text": "blocked by focus", "submit": true}, true)
+	call("terminal_action", map[string]any{"terminalId": directView, "action": "message", "text": "person typing directly"}, false)
+	call("terminal_action", map[string]any{"terminalId": directView, "action": "release"}, false)
+	call("terminal_action", map[string]any{"terminalId": directView, "action": "close"}, false)
+	// The standalone page resolves boxId exactly as the MCP workspace does.
+	for _, action := range []string{"connect", "inspect", "message"} {
+		request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/api/managers/"+action, strings.NewReader(`{"boxId":"external","text":"standalone instruction"}`))
+		request.Header.Set("Authorization", "Bearer "+s.Token())
+		response := httptest.NewRecorder()
+		s.Handler(nil).ServeHTTP(response, request)
+		if response.Code != 200 {
+			t.Fatalf("standalone %s: %d %s", action, response.Code, response.Body.String())
+		}
+	}
+	// Legacy calls remain aliases for externally created boxes too.
+	call("read_manager", map[string]any{"managerId": "external"}, false)
+	call("archive_box", map[string]any{"boxId": "external"}, false)
+	call("send_box", map[string]any{"boxId": "external", "text": "archived", "submit": true}, true)
 	call("connect_manager", map[string]any{"managerId": "foreign"}, true)
 	call("connect_manager", map[string]any{"managerId": "../alpha"}, true)
 	call("read_manager", map[string]any{}, true)

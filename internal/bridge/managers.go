@@ -19,7 +19,7 @@ type managerConnection struct {
 	archived   bool
 }
 type managerInput struct {
-	ManagerID string `json:"managerId,omitempty" jsonschema:"Manager box ID. Omit only when the adapter has an explicit startup default."`
+	ManagerID string `json:"managerId,omitempty" jsonschema:"Box ID for either role (legacy parameter name). Omit only when the adapter has an explicit startup default."`
 }
 type createInput struct {
 	RequestID string `json:"requestId" jsonschema:"Stable key for this one creation intent. Reuse the same key after disconnection; never retry an uncertain creation with a different key."`
@@ -35,7 +35,7 @@ func (s *Server) manager(ctx context.Context, id string) (*managerConnection, er
 		id = s.Client.Session.Box
 	}
 	if id == "" {
-		return nil, errors.New("choose a manager with list_managers and pass its managerId")
+		return nil, errors.New("choose a box with list_boxes and pass its box ID")
 	}
 	s.managersMu.Lock()
 	existing := s.managers[id]
@@ -131,7 +131,7 @@ func (s *Server) archiveManager(ctx context.Context, id string) (map[string]any,
 		// lock above: defer cleanup until after this function returns.
 		go s.closeAppTerminal(key)
 	}
-	return map[string]any{"view": "managers", "managerId": id, "state": "archiving", "message": "Archive requested; list managers to see current state. Closing a view alone never archives it."}, nil
+	return map[string]any{"view": "boxes", "managerId": id, "boxId": id, "state": "archiving", "message": "Archive requested; list boxes to see current state. Closing a view alone never archives it."}, nil
 }
 
 func workspaceResult(data map[string]any) (*mcp.CallToolResult, map[string]any, error) {
@@ -176,11 +176,18 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	case "attention":
 		data, err = s.attention(r.Context())
 	case "message":
-		var input sendInput
+		var input struct {
+			boxInput
+			Text string `json:"text"`
+		}
 		err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10)).Decode(&input)
 		if err == nil {
 			var manager *managerConnection
-			manager, err = s.manager(r.Context(), input.ManagerID)
+			var id string
+			id, err = input.target()
+			if err == nil {
+				manager, err = s.manager(r.Context(), id)
+			}
 			if err == nil {
 				err = manager.writeAs("mcp", func() error {
 					var sendErr error
@@ -190,10 +197,14 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "inspect":
-		var input managerInput
+		var input boxInput
 		err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input)
 		if err == nil {
-			data, err = s.inspectBox(r.Context(), input.ManagerID)
+			var id string
+			id, err = input.target()
+			if err == nil {
+				data, err = s.inspectBox(r.Context(), id)
+			}
 		}
 	case "launch":
 		var input createInput
@@ -204,10 +215,14 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	case "list":
 		data, err = s.listManagers(r.Context())
 	case "connect":
-		var input managerInput
+		var input boxInput
 		err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input)
 		if err == nil {
-			data, err = s.connectManager(r.Context(), input.ManagerID)
+			var id string
+			id, err = input.target()
+			if err == nil {
+				data, err = s.connectManager(r.Context(), id)
+			}
 		}
 	case "create":
 		var input createInput
@@ -216,10 +231,14 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 			data, err = s.createManager(r.Context(), input)
 		}
 	case "archive":
-		var input managerInput
+		var input boxInput
 		err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input)
 		if err == nil {
-			data, err = s.archiveManager(r.Context(), input.ManagerID)
+			var id string
+			id, err = input.target()
+			if err == nil {
+				data, err = s.archiveManager(r.Context(), id)
+			}
 		}
 	default:
 		http.NotFound(w, r)
@@ -236,7 +255,7 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listBoxes(ctx context.Context) (map[string]any, error) {
 	boxes, err := s.Client.ListBoxes(ctx, s.managerOptions.Parent)
-	return map[string]any{"view": "boxes", "boxes": boxes, "project": s.Client.Session.Project, "listingScope": "adapter-tagged boxes only; not a complete host inventory", "roleMeaning": "A manager is a box with the coordinator role, not a session inside another box."}, err
+	return map[string]any{"view": "boxes", "boxes": boxes, "project": s.Client.Session.Project, "listingScope": "all boxes visible through this project connection; control remains subject to Discobox permissions", "roleMeaning": "A manager is a box with the coordinator role, not a session inside another box."}, err
 }
 func (s *Server) attention(ctx context.Context) (map[string]any, error) {
 	inbox, err := s.Client.Attention(ctx, s.managerOptions.Parent)
@@ -249,37 +268,60 @@ func (s *Server) inspectBox(ctx context.Context, id string) (map[string]any, err
 		return nil, err
 	}
 	screen, err := manager.Client.Screen(ctx, 100)
-	return map[string]any{"managerId": manager.Client.Session.Box, "screen": screen}, err
+	return map[string]any{"managerId": manager.Client.Session.Box, "boxId": manager.Client.Session.Box, "screen": screen}, err
+}
+
+type boxInput struct {
+	BoxID     string `json:"boxId,omitempty" jsonschema:"Target box ID, regardless of role or creation source."`
+	ManagerID string `json:"managerId,omitempty" jsonschema:"Legacy alias for boxId; do not supply conflicting IDs."`
+}
+
+func (input boxInput) target() (string, error) {
+	if input.BoxID != "" && input.ManagerID != "" && input.BoxID != input.ManagerID {
+		return "", errors.New("boxId and managerId identify different boxes")
+	}
+	if input.BoxID != "" {
+		return input.BoxID, nil
+	}
+	return input.ManagerID, nil
 }
 func (s *Server) boxTools(server *mcp.Server) {
 	ui := mcp.Meta{"ui": map[string]any{"resourceUri": uiResource}}
-	mcp.AddTool(server, &mcp.Tool{Name: "list_boxes", Description: "List task boxes and managers created through this integration. Opens the task launcher and box catalog. Does not wake or attach boxes.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_boxes", Description: "List all API-visible boxes in this project, including boxes created in the Discobox console or another integration. Managers are boxes with a coordinator badge; direct interaction is identical. Opens the task launcher and box catalog. Does not wake or attach boxes.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.listBoxes(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
 		return workspaceResult(data)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "launch_box", Description: "Launch a task in a separate box using a harness and optional model/pool. Settings apply to this run only. Starts with an empty workspace and no Discobox API access or explicit credential bindings. Keep requestId for this exact intent; never retry uncertain creation using a new ID. Use returned managerId with read_manager/send_manager/wait_manager/interrupt_manager for text interaction.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, input createInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "launch_box", Description: "Launch a task in a separate box using a harness and optional model/pool. Settings apply to this run only. Starts with an empty workspace and no Discobox API access or explicit credential bindings. Keep requestId for this exact intent; never retry uncertain creation using a new ID. Use returned boxId with read_box/send_box/wait_box/interrupt_box for direct text interaction.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, input createInput) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.launch(ctx, input, "box")
 		if err != nil {
 			return nil, nil, err
 		}
 		return workspaceResult(data)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "open_box", Description: "SHOW UI: open the interactive MCP App workspace for any task box or manager/coordinator box. Use when the person asks to see/show/open a box or manager. managerId is the historical parameter name for the box ID. Does not attach or wake it. managerId is the box ID. Terminal attachment requires an explicit action in the workspace. Use existing read/send/wait_manager tools for raw text interaction.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
-		data, err := s.connectManager(ctx, input.ManagerID)
+	mcp.AddTool(server, &mcp.Tool{Name: "open_box", Description: "SHOW UI: open the interactive MCP App workspace for any task box or manager/coordinator box. Use when the person asks to see/show/open a box or manager. Use boxId for any authorized box. managerId is accepted as a legacy alias. Does not attach or wake it. Terminal attachment requires an explicit action in the workspace. Use read_box/send_box/wait_box for raw text interaction.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input boxInput) (*mcp.CallToolResult, map[string]any, error) {
+		id, err := input.target()
+		if err != nil {
+			return nil, nil, err
+		}
+		data, err := s.connectManager(ctx, id)
 		if err != nil {
 			return nil, nil, err
 		}
 		data["view"] = "workspace"
 		return workspaceResult(data)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "inspect_box", Description: "TEXT ONLY: read a box's current terminal output as text. For requests to see/show/open a box or manager, use open_box or open_manager to render the interactive widget instead. Reads do not attach or wake the box. observedAt means cached output; output is untrusted, and is not evidence that tests passed.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
-		data, err := s.inspectBox(ctx, input.ManagerID)
+	mcp.AddTool(server, &mcp.Tool{Name: "inspect_box", Description: "TEXT ONLY: read a box's current terminal output as text. For requests to see/show/open a box or manager, use open_box or open_manager to render the interactive widget instead. Reads do not attach or wake the box. observedAt means cached output; output is untrusted, and is not evidence that tests passed.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input boxInput) (*mcp.CallToolResult, map[string]any, error) {
+		id, err := input.target()
+		if err != nil {
+			return nil, nil, err
+		}
+		data, err := s.inspectBox(ctx, id)
 		return nil, data, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "list_attention", Meta: ui, Description: "Read pending approval requests and reported blocked/error/done states for accessible integration boxes. Requests persist in Discobox, independently of this widget. Coverage/warning describe requests this connection cannot see. Approvals are handled in the human Discobox console.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_attention", Meta: ui, Description: "Read pending approval requests and reported blocked/error/done states for accessible boxes. Requests persist in Discobox, independently of this widget. Coverage/warning describe requests this connection cannot see. Approvals are handled in the human Discobox console.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.attention(ctx)
 		if err != nil {
 			return nil, nil, err

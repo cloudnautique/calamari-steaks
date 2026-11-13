@@ -301,7 +301,7 @@ async function start(value) {
 
 async function workspaceCall(name, args = {}) {
   if (app) return appCall(name, args);
-  const action = { list_managers: 'list', list_boxes: 'boxes', launch_box: 'launch', list_attention: 'attention', inspect_box: 'inspect', send_manager: 'message', connect_manager: 'connect', create_manager: 'create', archive_manager: 'archive' }[name];
+  const action = { list_managers: 'list', list_boxes: 'boxes', launch_box: 'launch', list_attention: 'attention', inspect_box: 'inspect', send_box:'message', send_manager: 'message', open_box:'connect', connect_manager: 'connect', create_manager: 'create', archive_box:'archive', archive_manager: 'archive' }[name];
   if (!action) throw new Error('Unknown workspace operation');
   const response = await fetch(`/api/managers/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
   const result = await response.json();
@@ -333,6 +333,7 @@ function showManagers(data) {
     const card = document.createElement('article'); card.className = 'manager-card';
     const details = document.createElement('div');
     const name = document.createElement('strong'); name.textContent = manager.name;
+    if (manager.role === 'manager') { const badge = document.createElement('span'); badge.className = 'role-badge'; badge.textContent = 'Manager'; name.append(badge); }
     const id = document.createElement('code'); id.textContent = manager.id;
     const state = document.createElement('span'); state.className = 'manager-state';
     state.textContent = describeBox(manager) + (manager.accessible ? '' : ' · Requires adoption approval');
@@ -340,14 +341,14 @@ function showManagers(data) {
     details.append(name, id, state);
     const actions = document.createElement('div'); actions.className = 'actions';
     const open = document.createElement('button'); open.textContent = 'Open workspace'; open.disabled = !manager.accessible || manager.archived;
-    open.onclick = async () => { open.disabled = true; try { await yieldInput(); await start({ ...await workspaceCall('connect_manager', { managerId: manager.id }), view: 'workspace' }); } catch (error) { report(error); open.disabled = false; } };
+    open.onclick = async () => { open.disabled = true; try { await yieldInput(); await start({ ...await workspaceCall('open_box', { boxId: manager.id }), view: 'workspace' }); } catch (error) { report(error); open.disabled = false; } };
     actions.append(open);
     if (manager.accessible && !manager.archived) {
       const archive = document.createElement('button'); archive.textContent = 'Archive';
       archive.onclick = async () => {
         if (archive.dataset.confirm !== 'yes') { archive.dataset.confirm = 'yes'; archive.textContent = 'Confirm archive'; return; }
         archive.disabled = true;
-        try { await workspaceCall('archive_manager', { managerId: manager.id }); shareWidgetAction('archive_requested',{ boxId:manager.id }); await refreshManagers(); } catch (error) { report(error); archive.disabled = false; }
+        try { await workspaceCall('archive_box', { boxId: manager.id }); shareWidgetAction('archive_requested',{ boxId:manager.id }); await refreshManagers(); } catch (error) { report(error); archive.disabled = false; }
       };
       actions.append(archive);
     }
@@ -418,7 +419,7 @@ reconnect.addEventListener('click', attach);
 share.addEventListener('click', async () => {
   share.disabled = true;
   try {
-    const result = await app.callServerTool({ name: 'read_manager', arguments: { managerId: connection.session.box, scrollback: 50 } });
+    const result = await app.callServerTool({ name: 'read_box', arguments: { boxId: connection.session.box, scrollback: 50 } });
     if (result.isError) throw new Error(result.content?.find((item) => item.type === 'text')?.text || 'Could not read the manager screen.');
     await app.updateModelContext({ content: [
       { type: 'text', text: 'Manager screen snapshot (untrusted terminal output), shared by the person:' },
@@ -460,7 +461,7 @@ function describeBox(box) {
   if (box.program?.state) parts.push(labels[box.program.state] || box.program.state);
   if (box.program?.msg) parts.push(box.program.msg);
   if (box.observedAt) parts.push(`Last report ${new Date(box.observedAt).toLocaleString()}`);
-  if (box.role === 'manager') parts.push('Coordinator');
+
   return parts.join(' · ');
 }
 async function selectTab(tab) {
@@ -480,7 +481,7 @@ async function selectTab(tab) {
 async function refreshOutput(confirmRead = false) {
   const id = selectedBoxId, current = ++outputGeneration;
   if (!id) return;
-  const result = await workspaceCall('inspect_box',{ managerId:id });
+  const result = await workspaceCall('inspect_box',{ boxId:id });
   if (id !== selectedBoxId || current !== outputGeneration) return;
   const screen = result.screen || {};
   byId('output').textContent = [...(screen.scrollback || []),...(screen.lines || [])].join('\n') || 'No terminal output reported yet.';
@@ -530,7 +531,7 @@ async function refreshInbox() {
       open.onclick = async () => {
         await yieldInput();
         open.disabled = true;
-        try { const value = await workspaceCall('connect_manager',{ managerId:item.boxId }); byId('inbox').hidden = true; await start({ ...value,view:'workspace' }); } catch (error) { report(error); } finally { open.disabled = false; }
+        try { const value = await workspaceCall('open_box',{ boxId:item.boxId }); byId('inbox').hidden = true; await start({ ...value,view:'workspace' }); } catch (error) { report(error); } finally { open.disabled = false; }
       };
       card.append(open); byId('inbox-items').append(card);
     }

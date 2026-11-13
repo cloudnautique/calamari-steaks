@@ -12,7 +12,8 @@ import (
 	"sort"
 )
 
-// Manager is a tagged persistent session, independent of any connected view.
+// Manager is a visible box, independent of its role, tags, or connected views.
+// The type name is retained for compatibility with the original adapter.
 type Manager struct {
 	ID         string         `json:"id"`
 	Name       string         `json:"name"`
@@ -42,9 +43,9 @@ func (c *Client) ListBoxes(ctx context.Context, parent string) ([]Manager, error
 	return c.listBoxes(ctx, parent, false)
 }
 func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool) ([]Manager, error) {
-	path := "/projects/" + c.Session.Project + "/sandboxes?tag=" + managerTagKey
+	path := "/projects/" + c.Session.Project + "/sandboxes"
 	if managersOnly {
-		path += "%3D" + managerTagValue
+		path += "?tag=" + managerTagKey + "%3D" + managerTagValue
 	}
 	result, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -53,20 +54,20 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 	raw, present := result["sandboxes"]
 	items, valid := raw.([]any)
 	if !present || (raw != nil && !valid) {
-		return nil, errors.New("invalid manager listing response")
+		return nil, errors.New("invalid box listing response")
 	}
 	managers := []Manager{}
 	for _, item := range items {
 		box, ok := item.(map[string]any)
 		if !ok {
-			return nil, errors.New("invalid manager in listing")
+			return nil, errors.New("invalid box in listing")
 		}
-		if !hasWorkspaceTag(box) || (managersOnly && !hasManagerTag(box)) {
+		if managersOnly && !hasManagerTag(box) {
 			continue
 		}
 		id, _ := box["id"].(string)
 		if !identifier.MatchString(id) {
-			return nil, errors.New("invalid manager ID in listing")
+			return nil, errors.New("invalid box ID in listing")
 		}
 		runtime, _ := box["runtime"].(map[string]any)
 		desired, _ := runtime["desiredState"].(string)
@@ -103,7 +104,8 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 		parentID := entryParent(box)
 		entry := Manager{ID: id, Name: name, State: state, Parent: parentID, Accessible: parent == "" || parentID == parent, Archived: desired == "archived", Role: roleOf(box)}
 		config, _ := box["config"].(map[string]any)
-		if entry.Role == "box" {
+		if entry.Role != managerTagValue {
+			entry.Role = "box"
 			if prompt, ok := config["prompt"].([]any); ok {
 				for _, part := range prompt {
 					if text, ok := part.(string); ok {
@@ -141,14 +143,11 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 
 func (c *Client) managerBox(ctx context.Context, id, parent string) (map[string]any, error) {
 	if !identifier.MatchString(id) {
-		return nil, errors.New("invalid manager ID")
+		return nil, errors.New("invalid box ID")
 	}
 	box, err := c.request(ctx, http.MethodGet, "/projects/"+c.Session.Project+"/sandboxes/"+id, nil)
 	if err != nil {
 		return nil, err
-	}
-	if !hasWorkspaceTag(box) {
-		return nil, errors.New("box is not tagged as an adapter workspace")
 	}
 	if err := checkManagerParent(box, parent); err != nil {
 		return nil, err
@@ -217,7 +216,7 @@ func (c *Client) ArchiveManager(ctx context.Context, id, parent string) error {
 	}
 	_, err = c.request(ctx, http.MethodDelete, "/projects/"+c.Session.Project+"/sandboxes/"+id, nil)
 	if err != nil {
-		return fmt.Errorf("archive was not confirmed; list managers to check its outcome before retrying: %w", err)
+		return fmt.Errorf("archive was not confirmed; list boxes to check its outcome before retrying: %w", err)
 	}
 	return nil
 }

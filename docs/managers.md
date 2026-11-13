@@ -162,12 +162,12 @@ reports. The open widget refreshes the inbox and selected box's reported status
 approximately every 15 seconds; a closed widget cannot produce background chat
 or OS notifications. Reopening reconstructs pending items from Discobox.
 
-The inbox is scoped to accessible, non-archived integration boxes. Local sandbox
+The inbox is scoped to accessible, non-archived boxes. Local sandbox
 API mode can list their credential requests, but cannot read the human-only API,
 adoption, trust, or refresh inbox. The UI explicitly reports this coverage gap;
 a failed refresh shows unknown coverage rather than a misleading zero badge.
 Human-token connections use the unified approval listing, still filtered to
-accessible integration boxes; project-wide refresh requests remain in the
+accessible boxes; project-wide refresh requests remain in the
 console. This adapter does not collect credential values or approve requests
 under the person's identity. Use the Discobox console's approval inbox to answer
 requests, then refresh this view.
@@ -185,8 +185,8 @@ and Claude validation of this expanded flow is still pending.
 
 ## Keeping the desktop assistant in sync
 
-The `list_boxes` result uses `boxes` and explicitly labels its adapter-tagged
-scope. A manager is a box with the coordinator role, not an extra session inside
+The `list_boxes` result uses `boxes` and explicitly labels its API-visible
+project scope. A manager is a box with the coordinator role, not an extra session inside
 a task box. `managerId` remains the historical box-ID parameter for existing
 tools. UI-opening tool descriptions distinguish rendering a widget from reading
 a text snapshot. A successful tool response alone does not prove host rendering.
@@ -230,3 +230,33 @@ composer focus/blur, terminal focus and fit, and yielding on terminal hide. No
 instructions were sent in that check. Unit tests cover blur during a pending
 claim, release after a pending submission, failure without replay, and rejecting
 hidden/invalid layout measurements.
+
+
+## Direct interaction with any box
+
+`list_boxes` now lists every box the configured project API exposes, including
+boxes made in the Discobox console and other clients. Opening, reading, sending,
+waiting, interrupting, attaching a terminal, and archiving require no adapter tag
+or manager role. The Manager badge identifies a coordinator; it does not unlock
+a different interaction path. Tasks and harness details also appear for ordinary
+untagged boxes.
+
+Use `open_box` / `inspect_box` with `boxId`, and the canonical text tools
+`read_box`, `send_box`, `wait_box`, `interrupt_box`, and `archive_box` with the same
+`boxId`. `send_box` returns a `resumeAfter` cursor for `wait_box`. The existing
+manager-named tools remain compatible. `open_box` and `inspect_box` still accept
+`managerId` as a legacy alias, rejecting conflicting targets.
+
+Visibility is not authority: sandbox API mode can control only boxes it leads.
+Other visible boxes require adoption approval, as the list indicates. The
+adapter keeps parent checks and the server checks permissions on actual API
+calls; no approval is bypassed by removing a tag filter. Each connected box
+retains its independently pinned exec and human-focus ownership. The standalone
+page uses the same target checks as the MCP tools.
+
+Direct access was verified live with a temporary box created through the bare
+Discobox API, without adapter tags: listing, open/read/send/wait, terminal
+attachment, human ownership blocking model input, release/detach, and archive.
+The test box was archived after the check. Automated coverage also exercises
+interrupt, standalone box-ID routing, conflicting/invalid targets, denied
+parent access, archived-session refusal, and legacy manager-call compatibility.

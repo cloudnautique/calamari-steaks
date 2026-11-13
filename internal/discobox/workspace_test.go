@@ -93,6 +93,9 @@ func TestAttentionUsesDurableRequestsAndDoesNotWakeBoxes(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/projects/p/sandboxes":
+			if r.URL.RawQuery != "" {
+				t.Error("all-box listing sent a tag filter")
+			}
 			w.Write([]byte(`{"sandboxes":[
    {"id":"owned","parentSandboxId":"caller","config":{"name":"Review","prompt":["Review code"]},"meta":{"tags":{"discobox-mcp-role":"box"}},"runtime":{"desiredState":"present","displayState":"stopped","runtimeState":"running","agentStatusObservedAt":"2026-11-12T10:00:00Z","agentStatus":{"sessions":[{"primary":true,"programStatus":{"state":"blocked","msg":"Which branch?","secret":"must-not-forward"}}]}}},
    {"id":"foreign","parentSandboxId":"other","meta":{"tags":{"discobox-mcp-role":"manager"}},"runtime":{"desiredState":"present"}},
@@ -117,8 +120,8 @@ func TestAttentionUsesDurableRequestsAndDoesNotWakeBoxes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(boxes) != 3 {
-		t.Fatalf("tagged boxes: %d", len(boxes))
+	if len(boxes) != 4 {
+		t.Fatalf("visible boxes: %d", len(boxes))
 	}
 	for _, box := range boxes {
 		if box.ID == "owned" && box.State != "stopped" {

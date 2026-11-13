@@ -135,7 +135,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 17 {
+	if len(listed.Tools) != 22 {
 		t.Fatalf("tools: %d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {

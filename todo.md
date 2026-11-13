@@ -185,3 +185,11 @@ enrollment; see `docs/connection.md`. Go builds now require Go 1.27.1 or later.
 - [ ] Add human-authenticated approval actions or a supported console deep link.
 - [ ] Add desktop transport/view and structured result artifacts.
 - [ ] Add supported host notifications; open-widget polling is not background delivery.
+
+## Direct box access
+
+- [x] List all API-visible boxes rather than only adapter-tagged boxes.
+- [x] Open/read/send/wait/interrupt/attach/archive ordinary untagged boxes.
+- [x] Provide box-named text tools with boxId while preserving manager aliases.
+- [x] Keep authorization, per-box routing and focus ownership checks.
+- [ ] Implement the responsive grouped list from docs/boxes-ux-draft.html.
