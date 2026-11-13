@@ -140,14 +140,14 @@ just a URL would leave the box waiting for source delivery. Source delivery,
 desktop streaming, service previews, and structured change/artifact results are
 follow-up work, not controls in this first workspace.
 
-`open_box` takes `managerId` (the box ID), and opens **Task & output** without
-attaching or waking the box. It reads a terminal snapshot; cached output carries
-its observation timestamp. **Terminal** explicitly attaches and can wake the
-same box. **Detach terminal** closes the view's attachment while keeping the box.
-The composer targets the named box and can submit without terminal control.
-Taking terminal control still blocks model writes to that box. A failed send
-keeps its text and disables resubmission until the person refreshes and inspects
-the output. The UI never automatically replays input.
+`open_box` takes `boxId` (`managerId` remains a legacy alias) and opens the
+live terminal immediately. Displaying the widget attaches to the pinned session
+and can wake its box. Task details are collapsible; the terminal remains live.
+There is no output refresh button or separate snapshot view. New bytes arrive
+through the MCP App bridge, or WebSocket in the standalone browser. Opening a
+viewer does not claim input; focusing the composer or terminal does. A failed
+send retains its text and requires the person to check the live output before
+allowing resubmission. Input is never automatically replayed.
 
 All text mechanisms remain available: use the returned `managerId` with
 `read_manager`, `send_manager`, `wait_manager`, and `interrupt_manager`.
@@ -266,3 +266,21 @@ task/session titles. Older servers fall back to meta name, configured name, then
 box ID. Names can change as the harness reports its title; every action remains
 pinned to the stable box ID. Selected workspace labels follow refreshed inventory
 without replacing the selection or discarding a draft instruction.
+
+
+## Live output and reconnection
+
+The open workspace immediately starts the terminal stream and initial replay.
+MCP Apps keep an outstanding cursor read; the adapter wakes it as soon as bytes
+arrive rather than waiting for the 12-second idle timeout. The standalone page
+uses the existing WebSocket byte stream. Task details do not stop observation.
+Dropping observation triggers bounded-backoff reconnection to the same pinned
+box/exec; it never resubmits user input. Explicit detach or leaving the workspace
+cancels reconnection. Actual process exit, changed exec identity, or authorization
+failure requires a deliberate reopen rather than silently replacing a session.
+
+Automated stream tests verify new output wakes a pending read without repeated
+screen requests, and distinguish transport drops from process exit. An opaque
+iframe check verifies automatic attachment, fresh bytes repainting the renderer,
+and reconnecting after an injected read failure without input writes or snapshot
+requests. The injected bytes are test fixtures, not output from the research box.

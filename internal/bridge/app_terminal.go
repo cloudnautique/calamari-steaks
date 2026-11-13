@@ -27,17 +27,18 @@ type terminalChunk struct {
 	data   []byte
 }
 type appTerminal struct {
-	id      string
-	manager *managerConnection
-	stream  *discobox.Stream
-	cancel  context.CancelFunc
-	timer   *time.Timer
-	mu      sync.Mutex
-	chunks  []terminalChunk
-	bytes   int
-	cursor  uint64
-	wake    chan struct{}
-	done    bool
+	id           string
+	manager      *managerConnection
+	stream       *discobox.Stream
+	cancel       context.CancelFunc
+	timer        *time.Timer
+	mu           sync.Mutex
+	chunks       []terminalChunk
+	bytes        int
+	cursor       uint64
+	wake         chan struct{}
+	done         bool
+	sessionEnded bool
 }
 type terminalRead struct {
 	TerminalID string `json:"terminalId"`
@@ -131,10 +132,10 @@ func (s *Server) appTools(server *mcp.Server) {
 					}
 				}
 			}
-			done, wake, latest := view.done, view.wake, view.cursor
+			done, wake, latest, ended := view.done, view.wake, view.cursor, view.sessionEnded
 			view.mu.Unlock()
 			if len(chunks) > 0 || done {
-				return nil, map[string]any{"chunks": chunks, "cursor": cursor, "closed": done && cursor == latest}, nil
+				return nil, map[string]any{"chunks": chunks, "cursor": cursor, "closed": done && cursor == latest, "ended": ended}, nil
 			}
 			select {
 			case <-ctx.Done():
@@ -217,7 +218,13 @@ func (view *appTerminal) readOutput() {
 		if err != nil {
 			return
 		}
-		if kind == discobox.Exit || kind == discobox.Error {
+		if kind == discobox.Exit {
+			view.mu.Lock()
+			view.sessionEnded = true
+			view.mu.Unlock()
+			return
+		}
+		if kind == discobox.Error {
 			return
 		}
 		if kind != discobox.Stdout && kind != discobox.Stderr {

@@ -301,7 +301,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 		}
 		return workspaceResult(data)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "open_box", Description: "SHOW UI: open the interactive MCP App workspace for any task box or manager/coordinator box. Use when the person asks to see/show/open a box or manager. Use boxId for any authorized box. managerId is accepted as a legacy alias. Does not attach or wake it. Terminal attachment requires an explicit action in the workspace. Use read_box/send_box/wait_box for raw text interaction.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input boxInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "open_box", Description: "SHOW UI: open the interactive MCP App workspace for any task box or manager/coordinator box. Use when the person asks to see/show/open a box or manager. Use boxId for any authorized box. managerId is accepted as a legacy alias. The widget connects a live terminal automatically and may wake the box. Use read_box/send_box/wait_box for raw text interaction.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, input boxInput) (*mcp.CallToolResult, map[string]any, error) {
 		id, err := input.target()
 		if err != nil {
 			return nil, nil, err

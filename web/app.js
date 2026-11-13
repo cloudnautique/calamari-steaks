@@ -1,3 +1,4 @@
+import { StreamReconnect, canReconnect } from "./stream-reconnect.js";
 import { FocusControl } from "./focus-control.js";
 import { fittedDimensions } from "./terminal-layout.js";
 import { ContextSync } from "./context.js";
@@ -12,11 +13,33 @@ const reconnect = byId('reconnect');
 const share = byId('share');
 let app, connection, terminal, fit, socket, owned = false, connected = false;
 let appTerminal, generation = 0, rendererReady, pendingMessage, createRequestId;
-let managerCatalog, selectedBoxId, selectedName, activeTab = 'overview', inboxBusy = false;
-let stopped = false, inboxTimer, outputGeneration = 0, launchIntent, rendererCleanup;
+let managerCatalog, selectedBoxId, selectedName, activeTab = 'terminal', inboxBusy = false;
+let stopped = false, inboxTimer, launchIntent, rendererCleanup;
 const receipts = new Map(), drafts = new Map(), uncertainBoxes = new Set(), pendingBoxes = new Set();
 let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, focusController, focusTimer, attaching, pendingControl;
 const connectionEvents = new EventTarget();
+const streamReconnect = new StreamReconnect(() => {
+  if (!stopped && selectedBoxId && !byId('workspace').hidden) ensureAttached().catch(handleConnectionFailure);
+});
+function handleConnectionFailure(error) {
+  if (connected) return;
+  status.textContent = error?.sessionEnded ? 'Session ended' : 'Disconnected';
+  if (!stopped && selectedBoxId && !byId('workspace').hidden && canReconnect(error)) {
+    status.textContent = 'Reconnecting…';
+    streamReconnect.request();
+  }
+}
+function liveConnected() {
+  streamReconnect.cancel();
+  status.textContent = 'Terminal live';
+  if (inputFocused()) focusController?.focus(true).catch(report);
+}
+function assertSameSession(session) {
+  if (session?.box !== connection.session.box || session?.exec !== connection.session.exec) {
+    const error = new Error('This box’s terminal session changed. Reopen the box to connect to its new session. No input was replayed.');
+    error.sessionChanged = true; throw error;
+  }
+}
 const contextSync = new ContextSync(
   params => app.updateModelContext(params, { timeout: 2500 }),
   message => { byId('context-status').textContent = message; }
@@ -125,6 +148,7 @@ function attach() {
   socket = new WebSocket(url);
   socket.binaryType = 'arraybuffer';
   socket.onopen = () => send({ type: 'auth', token: connection.token });
+  let socketFailure;
   socket.onmessage = ({ data }) => {
     if (data instanceof ArrayBuffer) { terminal.write(new Uint8Array(data)); return; }
     try {
@@ -132,10 +156,11 @@ function attach() {
       switch (message.type) {
         case 'connected':
           connected = true;
+          assertSameSession(message.session);
           if (message.cols && message.rows) terminal.resize(message.cols, message.rows);
           control.disabled = false;
           status.textContent = 'Terminal live';
-          setControl(false); connectionEvents.dispatchEvent(new Event('connected'));
+          setControl(false); liveConnected(); connectionEvents.dispatchEvent(new Event('connected'));
           break;
         case 'control':
           pendingControl?.resolve(); pendingControl = undefined;
@@ -147,29 +172,33 @@ function attach() {
           pendingMessage?.resolve(); pendingMessage = undefined;
           break;
         case 'error':
+          socketFailure = new Error(message.message);
           pendingControl?.reject(new Error(message.message)); pendingControl = undefined;
           pendingMessage?.reject(new Error(message.message)); pendingMessage = undefined;
           control.disabled = !connected;
           report(message.message);
           break;
         case 'exit':
-          report('The manager session exited. Reconnecting does not start a replacement.');
+          streamReconnect.cancel();
+          report('The session ended. Reopening the box never creates a replacement automatically.');
+          socket.onclose = null; socket.close(); connected = false; setControl(false); status.textContent = 'Session ended';
           break;
       }
-    } catch (error) { report(error); }
+    } catch (error) { report(error); if (error.sessionChanged) { socketFailure=error; socket.close(); } }
   };
   socket.onerror = () => report('Terminal connection failed. Check the server, the host’s local-network policy, and the configured UI origin.');
   socket.onclose = () => {
     if (focusController) focusController.held = false;
     pendingControl?.reject(new Error('Terminal disconnected')); pendingControl = undefined;
-    connectionEvents.dispatchEvent(new Event('disconnected'));
+    connectionEvents.dispatchEvent(new CustomEvent('disconnected',{detail:socketFailure || new Error('Terminal disconnected')}));
     pendingMessage?.reject(new Error('Connection lost; message delivery is uncertain. Read the manager before resending.')); pendingMessage = undefined;
     connected = false;
     setControl(false);
     control.disabled = true;
     reconnect.disabled = false;
     status.textContent = 'Disconnected';
-    byId('hint').textContent = 'Detached. Reconnect to inspect the session before sending more input.';
+    byId('hint').textContent = 'Restoring live output. Input is never replayed automatically.';
+    handleConnectionFailure(socketFailure || new Error('Terminal disconnected'));
   };
 }
 
@@ -199,6 +228,7 @@ function disconnectApp(error) {
   reconnect.disabled = false;
   status.textContent = 'Disconnected';
   report(error);
+  handleConnectionFailure(error);
 }
 async function attachApp() {
   if (appTerminal) return;
@@ -213,6 +243,8 @@ async function attachApp() {
       await appCall('terminal_action', { terminalId: opened.terminalId, action: 'close' });
       return;
     }
+    try { assertSameSession(opened.session); }
+    catch (error) { await appCall('terminal_action',{terminalId:opened.terminalId,action:'close'}); throw error; }
     appTerminal = opened.terminalId;
     inputQueue = Promise.resolve();
     terminal.reset();
@@ -220,7 +252,7 @@ async function attachApp() {
     connected = true;
     setControl(false);
     control.disabled = false;
-    status.textContent = 'Terminal live';
+    liveConnected();
     (async () => {
     let cursor = opened.cursor;
     while (current === generation) {
@@ -228,11 +260,12 @@ async function attachApp() {
       if (current !== generation) return;
       for (const chunk of output.chunks) terminal.write(Uint8Array.from(atob(chunk), (character) => character.charCodeAt(0)));
       cursor = output.cursor;
-      if (output.closed) throw new Error('The terminal detached. Reconnect to inspect the same manager.');
+      if (output.closed) { const error = new Error('The terminal stream ended. Reopen the box if its session is still available.'); error.sessionEnded = !!output.ended; throw error; }
     }
     })().catch(error => { if (current === generation) disconnectApp(error); });
   } catch (error) {
     if (current === generation) disconnectApp(error);
+    throw error;
   }
 }
 
@@ -246,7 +279,12 @@ async function initializeRenderer() {
     fontFamily: color('--font-mono'),
     theme: { background: color('--ink-sunken'), foreground: color('--text'), cursor: color('--gold'), selectionBackground: color('--selection') },
   });
+  const composerFocused = document.activeElement === byId('message');
   terminal.open(byId('terminal'));
+  // Ghostty schedules a second focus on the next task; opening a viewer must
+  // not steal keyboard ownership from the assistant.
+  await new Promise(resolve => setTimeout(resolve,0));
+  if (composerFocused) byId('message').focus(); else terminal.blur();
   fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.onData((data) => {
@@ -261,6 +299,7 @@ async function initializeRenderer() {
 }
 
 function detach() {
+  streamReconnect.cancel();
   focusController?.focus(false).catch(()=>{}); clearTimeout(focusTimer);
   clearTimeout(fitTimer); lastResize = undefined;
   closeApp();
@@ -293,9 +332,9 @@ async function start(value) {
   byId('box-task').textContent = box?.task || (box?.role === 'manager' ? 'Coordinator: give this manager a task to begin.' : 'Work and output stay in this box.');
   byId('message-target').textContent = `Send instruction to ${selectedName} · ${selectedBoxId}`;
   renderReceipts();
-  byId('output').textContent = 'Reading output…';
-  await selectTab(value.view === 'terminal' ? 'terminal' : 'overview');
-  refreshOutput().catch(report);
+  document.querySelector('.toolbar').hidden = false;
+  byId('viewport').hidden = false;
+  await ensureAttached();
   shareWidgetAction('box_opened',{ boxId:selectedBoxId,role:box?.role || 'unknown' });
 }
 
@@ -319,13 +358,13 @@ function showManagers(data) {
   notice.hidden = true;
   byId('manager-browser').hidden = false;
   byId('workspace').hidden = true;
-  selectedBoxId = undefined; outputGeneration++;
+  selectedBoxId = undefined;
   document.querySelector('.toolbar').hidden = true;
   byId('viewport').hidden = true;
   byId('message-form').hidden = true;
   status.textContent = 'Boxes';
   shareWidgetAction('catalog_opened',{ boxes:catalogBoxes(data).map(box => ({ boxId:box.id,role:box.role,archived:box.archived })) });
-  byId('hint').textContent = `Project ${data.project || connection?.session?.project || 'default'} · Closing a view leaves its boxes in Discobox. Selecting a box does not wake it.`;
+  byId('hint').textContent = `Project ${data.project || connection?.session?.project || 'default'} · Closing a view leaves its boxes in Discobox. Opening a box connects live and may wake it.`;
   const list = byId('manager-list'); list.replaceChildren();
   const visible = catalogBoxes(data).filter((manager) => !manager.archived || byId('show-archived').checked);
   if (!visible.length) { const empty = document.createElement('p'); empty.textContent = 'No active boxes yet. Start a task above, or show archived boxes.'; list.append(empty); }
@@ -399,11 +438,11 @@ byId('send-message').onclick = async (event) => {
     shareWidgetAction('instruction_delivered',{ boxId:id,text:text.slice(0,2000),textTruncated:text.length > 2000 });
     const history = receipts.get(id) || []; history.push(text); receipts.set(id,history.slice(-20));
     drafts.delete(id);
-    if (id === selectedBoxId) { input.value = ''; renderReceipts(); byId('hint').textContent = 'Instruction delivered. Refresh output to follow the response.'; }
+    if (id === selectedBoxId) { input.value = ''; renderReceipts(); byId('hint').textContent = 'Instruction delivered. Its response appears in the live terminal.'; }
   } catch (error) {
     report(error); uncertainBoxes.add(id);
     shareWidgetAction('instruction_delivery_uncertain',{ boxId:id });
-    if (id === selectedBoxId) byId('hint').textContent = 'Delivery was not confirmed. Inspect output before retrying; input is never replayed automatically.';
+    if (id === selectedBoxId) { byId('uncertain-delivery').hidden = false; byId('hint').textContent = 'Check the live output before resending; input is never replayed automatically.'; }
   }
   finally { pendingBoxes.delete(id); input.disabled = pendingBoxes.has(selectedBoxId); button.disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId); }
 };
@@ -415,7 +454,7 @@ byId('message').onkeydown = (event) => {
   if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); byId('send-message').click(); }
 };
 
-reconnect.addEventListener('click', attach);
+reconnect.addEventListener('click', () => ensureAttached().catch(report));
 share.addEventListener('click', async () => {
   share.disabled = true;
   try {
@@ -464,35 +503,8 @@ function describeBox(box) {
 
   return parts.join(' · ');
 }
-async function selectTab(tab) {
-  activeTab = tab;
-  byId('overview-panel').hidden = tab !== 'overview';
-  document.querySelector('.toolbar').hidden = tab !== 'terminal';
-  byId('viewport').hidden = tab !== 'terminal';
-  byId('overview-tab').setAttribute('aria-selected',String(tab === 'overview'));
-  byId('terminal-tab').setAttribute('aria-selected',String(tab === 'terminal'));
-  if (tab === 'terminal') {
-    const id = selectedBoxId;
-    rendererReady ||= initializeRenderer(); await rendererReady;
-    if (id !== selectedBoxId || activeTab !== 'terminal' || byId('workspace').hidden) return;
-    if (!connected) await ensureAttached(); else fitOwned();
-  } else if (!connected) status.textContent = 'Inspecting';
-}
-async function refreshOutput(confirmRead = false) {
-  const id = selectedBoxId, current = ++outputGeneration;
-  if (!id) return;
-  const result = await workspaceCall('inspect_box',{ boxId:id });
-  if (id !== selectedBoxId || current !== outputGeneration) return;
-  const screen = result.screen || {};
-  byId('output').textContent = [...(screen.scrollback || []),...(screen.lines || [])].join('\n') || 'No terminal output reported yet.';
-  byId('output-freshness').textContent = screen.observedAt ? `Cached output from ${new Date(screen.observedAt).toLocaleString()}. Reading does not wake this box.` : `Output fetched ${new Date().toLocaleTimeString()}. Reading does not attach or wake this box.`;
-  if (confirmRead && uncertainBoxes.has(id)) {
-    uncertainBoxes.delete(id);
-    byId('send-message').disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId);
-    byId('hint').textContent = 'Output refreshed. Check whether your instruction already arrived before sending again.';
-  }
-}
 function renderReceipts() {
+  byId('uncertain-delivery').hidden = !uncertainBoxes.has(selectedBoxId);
   byId('message').value = drafts.get(selectedBoxId) || '';
   byId('message').disabled = pendingBoxes.has(selectedBoxId);
   byId('message-receipts').replaceChildren();
@@ -548,22 +560,20 @@ async function refreshInbox() {
     if (!stopped) inboxTimer = setTimeout(refreshInbox,15000);
   }
 }
-byId('overview-tab').onclick = () => selectTab('overview').catch(report);
 byId('fit-terminal').onclick = fitOwned;
-byId('terminal-tab').onclick = () => selectTab('terminal').catch(report);
-byId('refresh-output').onclick = () => refreshOutput(true).catch(report);
+byId('review-delivery').onclick = () => { uncertainBoxes.delete(selectedBoxId); byId('uncertain-delivery').hidden = true; byId('send-message').disabled = pendingBoxes.has(selectedBoxId); };
 byId('inbox-button').onclick = () => { byId('inbox').hidden = !byId('inbox').hidden; if (!byId('inbox').hidden) refreshInbox(); };
 byId('close-inbox').onclick = () => { byId('inbox').hidden = true; };
 byId('refresh-inbox').onclick = refreshInbox;
 function cleanupWorkspace() {
   if (stopped) return;
-  stopped = true; clearTimeout(inboxTimer); clearTimeout(fitTimer); outputGeneration++;
+  stopped = true; clearTimeout(inboxTimer); clearTimeout(fitTimer); streamReconnect.cancel();
   socket?.close(); closeApp(); rendererCleanup?.();
 }
 window.addEventListener('pagehide',cleanupWorkspace,{ once:true });
 byId('detach-terminal').onclick = () => {
   detach(); control.disabled = true; reconnect.disabled = false;
-  selectTab('overview').catch(report);
+  status.textContent = 'Detached';
   byId('hint').textContent = 'Terminal detached. The box remains in Discobox and can sleep under its normal idle policy.';
 };
 
@@ -593,7 +603,7 @@ async function ensureAttached() {
     if (app) { await attachApp(); if (!connected) throw new Error('Terminal did not connect.'); return; }
     await new Promise((resolve,reject) => {
       const done = error => { clearTimeout(timer); connectionEvents.removeEventListener('connected',ready); connectionEvents.removeEventListener('disconnected',failed); error ? reject(error) : resolve(); };
-      const ready = () => done(), failed = () => done(new Error('Terminal connection failed.'));
+      const ready = () => done(), failed = event => done(event.detail || new Error('Terminal connection failed.'));
       const timer = setTimeout(() => done(new Error('Terminal connection timed out.')),50000);
       connectionEvents.addEventListener('connected',ready); connectionEvents.addEventListener('disconnected',failed); attach();
     });
