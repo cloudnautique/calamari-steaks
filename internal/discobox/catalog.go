@@ -85,6 +85,11 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 				name = value
 			}
 		}
+		// Match the Discobox console's authoritative human-facing name. It may
+		// contain the primary harness's task title; routing always uses the ID.
+		if value, ok := box["displayName"].(string); ok && value != "" {
+			name = value
+		}
 		state, _ := runtime["displayState"].(string)
 		if state == "" {
 			state, _ = box["displayState"].(string)

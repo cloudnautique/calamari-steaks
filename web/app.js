@@ -510,7 +510,12 @@ async function refreshInbox() {
       managerCatalog = { ...managerCatalog,boxes:inbox.boxes };
       if (selectedBoxId) {
         const current = inbox.boxes.find(box => box.id === selectedBoxId);
-        if (current) byId('box-state').textContent = describeBox(current);
+        if (current) {
+          selectedName = current.name;
+          byId('box-title').textContent = selectedName;
+          byId('message-target').textContent = `Send instruction to ${selectedName} · ${selectedBoxId}`;
+          byId('box-state').textContent = describeBox(current);
+        }
       }
     }
     byId('attention-count').textContent = inbox.items.length;

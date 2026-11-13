@@ -260,3 +260,9 @@ attachment, human ownership blocking model input, release/detach, and archive.
 The test box was archived after the check. Automated coverage also exercises
 interrupt, standalone box-ID routing, conflicting/invalid targets, denied
 parent access, archived-session refusal, and legacy manager-call compatibility.
+
+Box names follow Discobox's authoritative `displayName`, matching the console's
+task/session titles. Older servers fall back to meta name, configured name, then
+box ID. Names can change as the harness reports its title; every action remains
+pinned to the stable box ID. Selected workspace labels follow refreshed inventory
+without replacing the selection or discarding a draft instruction.
