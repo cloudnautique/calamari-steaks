@@ -80,7 +80,7 @@ func (s *managerConnection) writeAs(owner string, write func() error) error {
 	}
 	if owner == "mcp" {
 		if s.controller != "" {
-			return errors.New("a person has terminal control; ask them to release it before sending instructions")
+			return errors.New("a person has input focus; wait for them to leave the composer or terminal before sending instructions")
 		}
 	} else if s.controller != owner {
 		return errors.New("take terminal control before typing")

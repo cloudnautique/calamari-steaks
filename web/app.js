@@ -1,3 +1,5 @@
+import { FocusControl } from "./focus-control.js";
+import { fittedDimensions } from "./terminal-layout.js";
 import { ContextSync } from "./context.js";
 import { App } from "@modelcontextprotocol/ext-apps";
 import { Terminal, FitAddon, Ghostty } from "ghostty-web";
@@ -13,7 +15,8 @@ let appTerminal, generation = 0, rendererReady, pendingMessage, createRequestId;
 let managerCatalog, selectedBoxId, selectedName, activeTab = 'overview', inboxBusy = false;
 let stopped = false, inboxTimer, outputGeneration = 0, launchIntent, rendererCleanup;
 const receipts = new Map(), drafts = new Map(), uncertainBoxes = new Set(), pendingBoxes = new Set();
-let inputQueue = Promise.resolve(), hostReady = false;
+let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, focusController, focusTimer, attaching, pendingControl;
+const connectionEvents = new EventTarget();
 const contextSync = new ContextSync(
   params => app.updateModelContext(params, { timeout: 2500 }),
   message => { byId('context-status').textContent = message; }
@@ -34,40 +37,44 @@ function setControl(value) {
   owned = value;
   byId('message').disabled = pendingBoxes.has(selectedBoxId);
   byId('send-message').disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId);
-  byId('browse').disabled = value;
+  byId('browse').disabled = false;
   shareWidgetAction('terminal_control_changed',{ boxId:selectedBoxId || null,owned:value });
   byId('message').placeholder = 'Give this box an instruction…';
-  control.textContent = owned ? 'Release control' : 'Take control';
+  control.textContent = owned ? 'Your input · assistant paused' : 'Assistant can write';
   control.setAttribute('aria-pressed', String(owned));
+  updateTerminalSize();
   byId('hint').textContent = owned
-    ? 'You control this box. Release control to let chat send instructions.'
-    : 'Messages target this box. Take terminal control only when you need raw keyboard input.';
+    ? 'You control input while focused here. Leaving the composer or terminal yields to the assistant.'
+    : 'Focus the composer or terminal to type; leaving it lets the assistant write.';
 }
 
 function send(message) {
   if (app) {
     const id = appTerminal;
-    if (!id) return;
+    if (!id) { if (['input','message','claim'].includes(message.type)) throw new Error('Terminal disconnected; input was not sent.'); return; }
     const action = message.type === 'message' ? { action: 'message', text: message.text } : message.type === 'input'
       ? { action: 'input', data: encodeBytes(new TextEncoder().encode(message.data)) }
       : { action: message.type, cols: message.cols, rows: message.rows };
     // Serialize terminal actions, including resize/claim/release. A failed
     // input stops the queue; reconnecting never replays it.
     const operation = inputQueue.then(async () => {
-      if (appTerminal !== id) return;
+      if (appTerminal !== id) { if (['input','message','claim'].includes(message.type)) throw new Error('Terminal changed; input was not sent.'); return; }
       await appCall('terminal_action', { terminalId: id, ...action });
       if (message.type === 'claim' || message.type === 'release') {
         setControl(message.type === 'claim');
         control.disabled = false;
-        if (owned) { fitOwned(); terminal.focus(); }
+        if (owned) fitOwned();
       }
     });
     inputQueue = operation.catch((error) => { if (appTerminal === id) disconnectApp(error); });
     return operation;
   }
   if (socket?.readyState !== WebSocket.OPEN) {
-    if (message.type === 'message') throw new Error('Terminal is disconnected; message was not sent.');
+    if (['input','message','claim'].includes(message.type)) throw new Error('Terminal is disconnected; input was not sent.');
     return;
+  }
+  if (message.type === 'claim' || message.type === 'release') {
+    return new Promise((resolve,reject) => { pendingControl = {resolve,reject}; socket.send(JSON.stringify(message)); });
   }
   if (message.type === 'message') {
     return new Promise((resolve, reject) => {
@@ -78,13 +85,29 @@ function send(message) {
   socket.send(JSON.stringify(message));
 }
 
+function updateTerminalSize() {
+  if (!terminal) return;
+  byId('terminal-size').textContent = `${terminal.cols} columns × ${terminal.rows} rows`;
+  byId('fit-terminal').disabled = !owned || !connected;
+  byId('fit-terminal').title = owned ? 'Fit this session to the visible pane' : 'Focus the terminal to fit it to this pane';
+}
 function fitOwned() {
-  if (!owned || !terminal) return;
-  fit.fit();
-  const cols = Math.max(2, Math.min(500, terminal.cols));
-  const rows = Math.max(2, Math.min(200, terminal.rows));
-  terminal.resize(cols, rows);
-  send({ type: 'resize', cols, rows });
+  clearTimeout(fitTimer);
+  if (!terminal) return;
+  const viewport = byId('viewport');
+  const visible = activeTab === 'terminal' && !viewport.hidden && !byId('workspace').hidden;
+  const dimensions = fittedDimensions({ owned,connected,visible,width:viewport.clientWidth,height:viewport.clientHeight,proposal:visible ? fit.proposeDimensions() : undefined });
+  if (!dimensions) return;
+  const { cols, rows } = dimensions, key = `${cols}:${rows}`;
+  if (key === lastResize) return;
+  lastResize = key;
+  terminal.resize(cols,rows);
+  updateTerminalSize();
+  send({ type:'resize',cols,rows });
+}
+function scheduleFit() {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(fitOwned,100);
 }
 
 // No automatic reconnect or input replay: a failed write may already have run.
@@ -95,7 +118,7 @@ function attach() {
   reconnect.disabled = true;
   control.disabled = true;
   status.textContent = 'Attaching / waking…';
-  terminal.reset();
+  lastResize = undefined; terminal.reset();
   const url = new URL('/terminal', connection.origin);
   url.searchParams.set('managerId', connection.session.box);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -112,17 +135,19 @@ function attach() {
           if (message.cols && message.rows) terminal.resize(message.cols, message.rows);
           control.disabled = false;
           status.textContent = 'Terminal live';
-          setControl(false);
+          setControl(false); connectionEvents.dispatchEvent(new Event('connected'));
           break;
         case 'control':
+          pendingControl?.resolve(); pendingControl = undefined;
           setControl(message.owned);
           control.disabled = false;
-          if (owned) { fitOwned(); terminal.focus(); }
+          if (owned) fitOwned();
           break;
         case 'sent':
           pendingMessage?.resolve(); pendingMessage = undefined;
           break;
         case 'error':
+          pendingControl?.reject(new Error(message.message)); pendingControl = undefined;
           pendingMessage?.reject(new Error(message.message)); pendingMessage = undefined;
           control.disabled = !connected;
           report(message.message);
@@ -135,6 +160,9 @@ function attach() {
   };
   socket.onerror = () => report('Terminal connection failed. Check the server, the host’s local-network policy, and the configured UI origin.');
   socket.onclose = () => {
+    if (focusController) focusController.held = false;
+    pendingControl?.reject(new Error('Terminal disconnected')); pendingControl = undefined;
+    connectionEvents.dispatchEvent(new Event('disconnected'));
     pendingMessage?.reject(new Error('Connection lost; message delivery is uncertain. Read the manager before resending.')); pendingMessage = undefined;
     connected = false;
     setControl(false);
@@ -156,12 +184,14 @@ async function appCall(name, args) {
   return result.structuredContent || JSON.parse(result.content.find((item) => item.type === 'text').text);
 }
 function closeApp() {
+  clearTimeout(fitTimer); lastResize = undefined;
   generation++;
   const id = appTerminal;
   appTerminal = undefined;
   if (id) appCall('terminal_action', { terminalId: id, action: 'close' }).catch(() => {});
 }
 function disconnectApp(error) {
+  if (focusController) focusController.held = false;
   closeApp();
   connected = false;
   setControl(false);
@@ -191,6 +221,7 @@ async function attachApp() {
     setControl(false);
     control.disabled = false;
     status.textContent = 'Terminal live';
+    (async () => {
     let cursor = opened.cursor;
     while (current === generation) {
       const output = await appCall('terminal_read', { terminalId: opened.terminalId, after: cursor });
@@ -199,6 +230,7 @@ async function attachApp() {
       cursor = output.cursor;
       if (output.closed) throw new Error('The terminal detached. Reconnect to inspect the same manager.');
     }
+    })().catch(error => { if (current === generation) disconnectApp(error); });
   } catch (error) {
     if (current === generation) disconnectApp(error);
   }
@@ -217,13 +249,20 @@ async function initializeRenderer() {
   terminal.open(byId('terminal'));
   fit = new FitAddon();
   terminal.loadAddon(fit);
-  terminal.onData((data) => { if (owned) send({ type: 'input', data }); });
-  const observer = new ResizeObserver(fitOwned);
+  terminal.onData((data) => {
+    const controller = focusController, id = selectedBoxId;
+    if (!controller || !inputFocused()) return;
+    controller.run(async () => { if (id !== selectedBoxId) throw new Error('Box changed; input was not sent.'); await send({ type:'input',data }); }).catch(report);
+  });
+  terminal.onResize(updateTerminalSize);
+  const observer = new ResizeObserver(scheduleFit);
   observer.observe(byId('viewport'));
   rendererCleanup = () => { observer.disconnect(); terminal.dispose(); };
 }
 
 function detach() {
+  focusController?.focus(false).catch(()=>{}); clearTimeout(focusTimer);
+  clearTimeout(fitTimer); lastResize = undefined;
   closeApp();
   if (socket) { const previous = socket; socket = undefined; previous.onclose = previous.onmessage = previous.onerror = previous.onopen = null; previous.close(); }
   connected = false;
@@ -244,7 +283,9 @@ async function start(value) {
   byId('session').textContent = `${value.session.project} / ${value.session.box} / ${value.session.exec}`;
   byId('manager-browser').hidden = true;
   byId('workspace').hidden = false;
+  byId('message-form').hidden = false;
   selectedBoxId = value.session.box;
+  configureFocusControl(selectedBoxId);
   const box = catalogBoxes(managerCatalog).find(item => item.id === selectedBoxId);
   selectedName = box?.name || selectedBoxId;
   byId('box-title').textContent = selectedName;
@@ -299,7 +340,7 @@ function showManagers(data) {
     details.append(name, id, state);
     const actions = document.createElement('div'); actions.className = 'actions';
     const open = document.createElement('button'); open.textContent = 'Open workspace'; open.disabled = !manager.accessible || manager.archived;
-    open.onclick = async () => { open.disabled = true; try { await start({ ...await workspaceCall('connect_manager', { managerId: manager.id }), view: 'workspace' }); } catch (error) { report(error); open.disabled = false; } };
+    open.onclick = async () => { open.disabled = true; try { await yieldInput(); await start({ ...await workspaceCall('connect_manager', { managerId: manager.id }), view: 'workspace' }); } catch (error) { report(error); open.disabled = false; } };
     actions.append(open);
     if (manager.accessible && !manager.archived) {
       const archive = document.createElement('button'); archive.textContent = 'Archive';
@@ -313,7 +354,7 @@ function showManagers(data) {
     card.append(details, actions); list.append(card);
   }
 }
-byId('browse').onclick = () => refreshManagers().catch(report);
+byId('browse').onclick = () => yieldInput().then(refreshManagers).catch(report);
 byId('show-archived').onchange = () => { if (managerCatalog) showManagers(managerCatalog); };
 byId('refresh-managers').onclick = () => refreshManagers().catch(report);
 byId('create-button').onclick = async (event) => {
@@ -353,8 +394,7 @@ byId('send-message').onclick = async (event) => {
   drafts.set(id,text); pendingBoxes.add(id);
   input.disabled = true; button.disabled = true;
   try {
-    if (owned) await send({ type: 'message', text });
-    else await workspaceCall('send_manager', { managerId: id, text, submit: true });
+    await focusController.run(async () => { if (id !== selectedBoxId) throw new Error('Box changed; instruction was not sent.'); await send({ type:'message',text }); });
     shareWidgetAction('instruction_delivered',{ boxId:id,text:text.slice(0,2000),textTruncated:text.length > 2000 });
     const history = receipts.get(id) || []; history.push(text); receipts.set(id,history.slice(-20));
     drafts.delete(id);
@@ -374,10 +414,6 @@ byId('message').onkeydown = (event) => {
   if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); byId('send-message').click(); }
 };
 
-control.addEventListener('click', () => {
-  control.disabled = true;
-  send({ type: owned ? 'release' : 'claim' });
-});
 reconnect.addEventListener('click', attach);
 share.addEventListener('click', async () => {
   share.disabled = true;
@@ -438,7 +474,7 @@ async function selectTab(tab) {
     const id = selectedBoxId;
     rendererReady ||= initializeRenderer(); await rendererReady;
     if (id !== selectedBoxId || activeTab !== 'terminal' || byId('workspace').hidden) return;
-    if (!connected) attach(); else fitOwned();
+    if (!connected) await ensureAttached(); else fitOwned();
   } else if (!connected) status.textContent = 'Inspecting';
 }
 async function refreshOutput(confirmRead = false) {
@@ -492,7 +528,7 @@ async function refreshInbox() {
       if (item.action === 'console') { const text = document.createElement('p'); text.textContent = `Open Discobox console → approval inbox. Request ${item.id}. This widget cannot approve using your human identity.`; card.append(text); }
       const open = document.createElement('button'); open.textContent = 'Inspect box';
       open.onclick = async () => {
-        if (owned) { report('Release terminal control before switching boxes.'); return; }
+        await yieldInput();
         open.disabled = true;
         try { const value = await workspaceCall('connect_manager',{ managerId:item.boxId }); byId('inbox').hidden = true; await start({ ...value,view:'workspace' }); } catch (error) { report(error); } finally { open.disabled = false; }
       };
@@ -507,6 +543,7 @@ async function refreshInbox() {
   }
 }
 byId('overview-tab').onclick = () => selectTab('overview').catch(report);
+byId('fit-terminal').onclick = fitOwned;
 byId('terminal-tab').onclick = () => selectTab('terminal').catch(report);
 byId('refresh-output').onclick = () => refreshOutput(true).catch(report);
 byId('inbox-button').onclick = () => { byId('inbox').hidden = !byId('inbox').hidden; if (!byId('inbox').hidden) refreshInbox(); };
@@ -514,7 +551,7 @@ byId('close-inbox').onclick = () => { byId('inbox').hidden = true; };
 byId('refresh-inbox').onclick = refreshInbox;
 function cleanupWorkspace() {
   if (stopped) return;
-  stopped = true; clearTimeout(inboxTimer); outputGeneration++;
+  stopped = true; clearTimeout(inboxTimer); clearTimeout(fitTimer); outputGeneration++;
   socket?.close(); closeApp(); rendererCleanup?.();
 }
 window.addEventListener('pagehide',cleanupWorkspace,{ once:true });
@@ -523,3 +560,46 @@ byId('detach-terminal').onclick = () => {
   selectTab('overview').catch(report);
   byId('hint').textContent = 'Terminal detached. The box remains in Discobox and can sleep under its normal idle policy.';
 };
+
+function inputFocused() {
+  const element = document.activeElement;
+  return document.hasFocus() && !byId('workspace').hidden &&
+    (byId('message-form').contains(element) || (activeTab === 'terminal' && (byId('terminal').contains(element) || element === byId('fit-terminal'))));
+}
+function configureFocusControl(id) {
+  focusController = new FocusControl(async () => {
+    if (id !== selectedBoxId || stopped) throw new Error('Box changed; no input sent.');
+    await ensureAttached();
+    if (id !== selectedBoxId || !connected || stopped) throw new Error('Terminal unavailable; no input sent.');
+    await send({type:'claim'});
+  },async () => {
+    if (id === selectedBoxId && connected && owned) await send({type:'release'});
+  });
+}
+async function yieldInput() { clearTimeout(focusTimer); await focusController?.focus(false); }
+async function ensureAttached() {
+  if (connected) return;
+  if (attaching) return attaching;
+  const id = selectedBoxId;
+  attaching = (async () => {
+    rendererReady ||= initializeRenderer(); await rendererReady;
+    if (id !== selectedBoxId || stopped) throw new Error('Box changed; terminal was not attached.');
+    if (app) { await attachApp(); if (!connected) throw new Error('Terminal did not connect.'); return; }
+    await new Promise((resolve,reject) => {
+      const done = error => { clearTimeout(timer); connectionEvents.removeEventListener('connected',ready); connectionEvents.removeEventListener('disconnected',failed); error ? reject(error) : resolve(); };
+      const ready = () => done(), failed = () => done(new Error('Terminal connection failed.'));
+      const timer = setTimeout(() => done(new Error('Terminal connection timed out.')),50000);
+      connectionEvents.addEventListener('connected',ready); connectionEvents.addEventListener('disconnected',failed); attach();
+    });
+  })();
+  try { await attaching; } finally { attaching = undefined; }
+}
+function syncInputFocus() {
+  clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => { focusController?.focus(inputFocused()).catch(report); },100);
+}
+document.addEventListener('focusin',syncInputFocus);
+document.addEventListener('focusout',syncInputFocus);
+window.addEventListener('blur',() => { yieldInput().catch(report); });
+window.addEventListener('focus',syncInputFocus);
+document.addEventListener('visibilitychange',() => { if (document.hidden) yieldInput().catch(report); else syncInputFocus(); });

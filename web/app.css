@@ -68,3 +68,9 @@ summary { cursor: pointer; font-size: 13px; }
 
 .workspace-heading { align-items: flex-start; }
 .actions { align-items: center; }
+
+/* Prevent the terminal canvas from determining the iframe or flex item width. */
+html, body, main, #workspace, #viewport, #terminal { min-width: 0; width: 100%; max-width: 100%; }
+#viewport { overflow-x: auto; }
+#terminal-size { font-size: 11px; white-space: nowrap; }
+.workspace-heading > div { min-width: 0; }

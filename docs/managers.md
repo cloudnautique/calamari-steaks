@@ -207,3 +207,26 @@ context updates. Refresh/reconnect the desktop MCP connection after an upgrade
 so its tool descriptions are current. `npm test` checks context ordering and
 host rejection; an opaque iframe bridge check also verified selection updates
 and clearing the active selection without writing to any box.
+
+## Focus-driven input handoff
+
+The person no longer needs a separate Take control click. Focusing the box
+composer or raw terminal claims that view's input ownership; leaving the input
+areas, hiding the terminal, switching windows, or hiding the document yields it.
+The input indicator shows whether the person or assistant can write. Send and
+already queued keystrokes finish before the release, so a blur cannot split a
+submission. A pending claim followed by blur releases after the claim returns.
+Two writers still cannot interleave terminal input. Focus is not a signal that
+an agent operation has finished, and commands already running continue.
+
+Focusing an unattached composer attaches to the selected session first and may
+wake its box. Observing output does not claim input. Terminal focus fits the
+shared grid to the visible pane; observers retain the existing session width.
+Hidden or collapsed panels cannot resize the PTY. Visible resizes are debounced
+and repeated dimensions are skipped; the toolbar shows columns and rows.
+
+The focus handoff was checked in the opaque iframe through the live MCP bridge:
+composer focus/blur, terminal focus and fit, and yielding on terminal hide. No
+instructions were sent in that check. Unit tests cover blur during a pending
+claim, release after a pending submission, failure without replay, and rejecting
+hidden/invalid layout measurements.
