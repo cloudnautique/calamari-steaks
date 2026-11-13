@@ -85,8 +85,9 @@ The create control starts a manager using the project's configured harness and
 pool. Managers requiring adoption are visible but cannot be opened here until
 the relevant approval is obtained.
 
-Opening a card displays the live Ghostty terminal and a message composer.
-Take control to type or send from the composer. Release control to let chat
+Opening a card displays the live Ghostty terminal. Type directly; the optional
+Send an instruction control expands a composer for whole-message submission.
+Focus claims input control and leaving the input yields it, letting chat
 send instructions. Input ownership belongs to each manager: controlling A
 does not block chat from working with B. The Managers button returns to the
 picker once control is released.
@@ -294,6 +295,14 @@ launcher expansion, and a narrow 360px-high host without page overflow.
 Workspaces now use the same 520px cap as the catalog when opened inline in
 chat, including hosts that omit displayMode or report a very large maxHeight.
 An explicitly fullscreen workspace uses the host's fixed canvas height; a
-maximum-only expanded canvas requests at most 720px. Returning to inline
+maximum-only expanded canvas uses its actual iframe height, bounded by the host maximum. Returning to inline
 restores the compact cap. Terminal fitting and file/desktop scrolling stay
 inside those bounds.
+
+The terminal workspace now keeps session IDs under Task & session details and
+Fit/Detach/Reconnect under Options. The whole-instruction composer is collapsed
+by default, with raw terminal typing as the primary input. Closing the composer
+yields its input lease. The shell can follow the host's light theme while the
+terminal keeps a dark ANSI palette. An opaque-frame check verified direct typing,
+composer focus/close, a 257px terminal area inside the 520px inline widget, and
+using the full 1100px maximum-only expanded canvas without page overflow.

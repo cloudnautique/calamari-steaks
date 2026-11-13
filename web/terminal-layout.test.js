@@ -37,3 +37,9 @@ test('workspaces stay compact in chat and follow explicit expanded canvas sizing
   assert.equal(widgetHeight({displayMode:'fullscreen',containerDimensions:{maxHeight:20000}},false),720);
   assert.equal(widgetHeight({displayMode:'inline',containerDimensions:{height:980}},false),520);
 });
+
+test('expanded maximum-only canvas uses its actual viewport rather than leaving a 720px panel',()=>{
+  assert.equal(widgetHeight({displayMode:'fullscreen',containerDimensions:{maxHeight:20000}},false,1100),1100);
+  assert.equal(widgetHeight({displayMode:'fullscreen',containerDimensions:{maxHeight:800}},false,1100),800);
+  assert.equal(widgetHeight({displayMode:'inline',containerDimensions:{maxHeight:20000}},false,1100),520);
+});

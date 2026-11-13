@@ -13,11 +13,13 @@ export function hostHeight(context) {
   return Number.isFinite(value)&&value>0?Math.floor(value):undefined;
 }
 
-export function widgetHeight(context, catalog) {
+export function widgetHeight(context, catalog, viewportHeight) {
   const available=hostHeight(context);
   // Missing displayMode is treated as inline. A host's generous maximum is
   // permission to use space, not a request to fill the conversation thread.
   if(catalog || context?.displayMode!=='fullscreen')return Math.min(520,available ?? 520);
   const fixed=context?.containerDimensions?.height;
-  return Number.isFinite(fixed)&&fixed>0?Math.floor(fixed):Math.min(720,available ?? 720);
+  if(Number.isFinite(fixed)&&fixed>0)return Math.floor(fixed);
+  const viewport=Number.isFinite(viewportHeight)&&viewportHeight>0?Math.floor(viewportHeight):720;
+  return Math.min(viewport,available ?? viewport);
 }

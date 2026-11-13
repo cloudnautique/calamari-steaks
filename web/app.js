@@ -25,7 +25,7 @@ let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, foc
 let requestedWidgetHeight;
 function resizeWidget() {
   if(!app)return;
-  const height=widgetHeight(app.getHostContext(),!byId('manager-browser').hidden);
+  const height=widgetHeight(app.getHostContext(),!byId('manager-browser').hidden,window.innerHeight);
   document.documentElement.style.setProperty('--app-max-height',`${height}px`);
   if(hostReady && height!==requestedWidgetHeight) {
     requestedWidgetHeight=height;
@@ -33,6 +33,7 @@ function resizeWidget() {
   }
   scheduleFit();
 }
+window.addEventListener('resize',resizeWidget);
 const filesView = new FilesView({
   call: (name,args) => workspaceCall(name,args),
   activity: shareWidgetAction,
@@ -111,8 +112,8 @@ function setControl(value) {
   control.setAttribute('aria-pressed', String(owned));
   updateTerminalSize();
   byId('hint').textContent = activeTab === 'files' ? 'Read a file, share it with chat, or return to the live terminal.' : owned
-    ? 'You control input while focused here. Leaving the composer or terminal yields to the assistant.'
-    : 'Focus the composer or terminal to type; leaving it lets the assistant write.';
+    ? 'You control input while focused here. Leaving this input yields control to the assistant.'
+    : 'Click the terminal to type; leaving it lets the assistant write.';
 }
 
 function send(message) {
@@ -376,6 +377,7 @@ async function start(value) {
   if (owned && connection?.session?.box !== value.session.box) throw new Error('Release control before switching managers.');
   if (selectedBoxId === value.session.box && !byId('workspace').hidden) { connection = {...connection,...value}; await selectWorkspaceTab('terminal'); return; }
   detach();
+  byId('message-details').open=false;
   connection = { ...connection, ...value };
   byId('session').textContent = `${value.session.project} / ${value.session.box} / ${value.session.exec}`;
   byId('manager-browser').hidden = true;
@@ -535,7 +537,7 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.7.0' }, {}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.7.1' }, {}, { autoResize: false });
     app.onhostcontextchanged=resizeWidget;
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;
@@ -648,7 +650,7 @@ byId('detach-terminal').onclick = () => {
 function inputFocused() {
   const element = document.activeElement;
   return document.hasFocus() && !byId('workspace').hidden &&
-    (byId('message-form').contains(element) || (activeTab === 'terminal' && (byId('terminal').contains(element) || element === byId('fit-terminal'))));
+    ((byId('message-details').open&&byId('message-form').contains(element)) || (activeTab === 'terminal' && byId('terminal').contains(element)));
 }
 function configureFocusControl(id) {
   focusController = new FocusControl(async () => {
@@ -700,6 +702,7 @@ async function selectWorkspaceTab(tab,filePath) {
   document.querySelector('.toolbar').hidden = tab !== 'terminal';
   byId('task-details').hidden = tab !== 'terminal';
   byId('message-form').hidden = tab !== 'terminal';
+  byId('message-details').hidden = tab !== 'terminal';
   share.hidden = !app || tab !== 'terminal';
   byId('terminal-tab').setAttribute('aria-selected',String(tab === 'terminal'));
   byId('files-tab').setAttribute('aria-selected',String(tab === 'files'));
@@ -754,3 +757,5 @@ async function downloadBoxFile(file) {
 byId('files-tab').onclick=()=>selectWorkspaceTab('files').catch(report);
 byId('terminal-tab').onclick=()=>selectWorkspaceTab('terminal').catch(report);
 byId('desktop-tab').onclick=()=>selectWorkspaceTab('desktop').catch(report);
+
+byId('message-details').ontoggle=()=>{if(!byId('message-details').open)yieldInput().catch(report);scheduleFit()};
