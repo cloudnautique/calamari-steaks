@@ -210,3 +210,11 @@ a copyable fallback prompt when unsupported. Background context is metadata only
 Terminal fitting follows pane and host geometry without taking keyboard control;
 a different human controller prevents passive resize. Short panes no longer
 force a 240px terminal or 420px page minimum. Desktop confirmation pending.
+
+Desktop prototype: open_box_desktop and a Desktop tab use bundled noVNC over
+app-only desktop_open/read/action calls. VNC bytes and session handles are only
+in _meta.desktop; app context contains identity/status/control receipts. Added
+bounded buffering/backpressure, sequenced writes, focus control, scaling, and
+stream cleanup. Real VNC rendering passed in an opaque isolated fixture iframe.
+The sandbox API role denies TCP tunnels, so real task-box validation requires an
+authorized host adapter. Native client validation remains pending; see docs/desktop.md.

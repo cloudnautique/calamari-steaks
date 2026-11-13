@@ -31,7 +31,8 @@ for (const dependency of [...dependencies].sort()) {
   const directory = new URL(`node_modules/${dependency}/`, root);
   const licenseFiles = (await readdir(directory)).filter((name) => /^licen[cs]e/i.test(name)).sort();
   if (!licenseFiles.length) throw new Error(`Missing license notice for bundled dependency ${dependency}`);
-  const license = (await Promise.all(licenseFiles.map((name) => readFile(new URL(name, directory), 'utf8')))).join('\n\n');
+  let license = (await Promise.all(licenseFiles.map((name) => readFile(new URL(name, directory), 'utf8')))).join('\n\n');
+  if(dependency==='@novnc/novnc')license+='\n\nBundled pako license:\n'+await readFile(new URL('vendor/pako/LICENSE',directory),'utf8');
   notices.push(`${dependency} ${pkg.version}\n\n${license}`);
   console.log(`${dependency}: ${pkg.version}`);
 }

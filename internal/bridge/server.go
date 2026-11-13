@@ -27,6 +27,9 @@ type Server struct {
 	managerOptions discobox.ManagerOptions
 	appMu          sync.Mutex
 	appTerminals   map[string]*appTerminal
+	desktopMu      sync.Mutex
+	desktops       map[string]*desktopSession
+	desktopOpening int
 }
 
 func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string, options discobox.ManagerOptions) (*Server, error) {
@@ -45,6 +48,7 @@ func New(client *discobox.Client, origin string, extraOrigins []string, accessTo
 		return nil, errors.New("access token must contain 64 hexadecimal characters")
 	}
 	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
+	s.desktops = make(map[string]*desktopSession)
 	if client.Session.Box != "" {
 		s.managers[client.Session.Box] = &managerConnection{Client: client}
 	}

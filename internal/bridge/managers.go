@@ -39,8 +39,9 @@ func (s *Server) manager(ctx context.Context, id string) (*managerConnection, er
 	}
 	s.managersMu.Lock()
 	existing := s.managers[id]
+	ready := existing != nil && existing.Client != nil
 	s.managersMu.Unlock()
-	if existing != nil {
+	if ready {
 		return existing, nil
 	}
 	client, err := s.Client.ConnectManager(ctx, id, s.managerOptions.Parent)
@@ -51,6 +52,9 @@ func (s *Server) manager(ctx context.Context, id string) (*managerConnection, er
 	s.managersMu.Lock()
 	defer s.managersMu.Unlock()
 	if existing = s.managers[id]; existing != nil {
+		if existing.Client == nil {
+			existing.Client = client
+		}
 		return existing, nil
 	}
 	s.managers[id] = candidate
@@ -131,6 +135,13 @@ func (s *Server) archiveManager(ctx context.Context, id string) (map[string]any,
 		// lock above: defer cleanup until after this function returns.
 		go s.closeAppTerminal(key)
 	}
+	s.desktopMu.Lock()
+	for key, view := range s.desktops {
+		if view.box == id {
+			go s.closeDesktop(key)
+		}
+	}
+	s.desktopMu.Unlock()
 	return map[string]any{"view": "boxes", "managerId": id, "boxId": id, "state": "archiving", "message": "Archive requested; list boxes to see current state. Closing a view alone never archives it."}, nil
 }
 

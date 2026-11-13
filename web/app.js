@@ -1,4 +1,5 @@
 import { FilesView } from "./files-view.js";
+import { DesktopView } from "./desktop-view.js";
 import { StreamReconnect, canReconnect } from "./stream-reconnect.js";
 import { FocusControl } from "./focus-control.js";
 import { fittedDimensions, widgetHeight } from "./terminal-layout.js";
@@ -43,6 +44,13 @@ const filesView = new FilesView({
   },
   download: downloadBoxFile,
 });
+const desktopView = new DesktopView(async(name,args)=>{
+  if(!app)throw new Error('Desktop streaming requires the MCP App bridge. Open this box through your chat client.');
+  const result=await app.callServerTool({name,arguments:args});
+  if(result.isError)throw new Error(result.content?.find(item=>item.type==='text')?.text||'Desktop transport failed');
+  if(!result._meta?.desktop)throw new Error('The host did not deliver private desktop metadata. No graphics were sent to chat.');
+  return result._meta.desktop;
+},shareWidgetAction);
 const connectionEvents = new EventTarget();
 const streamReconnect = new StreamReconnect(() => {
   if (!stopped && selectedBoxId && !byId('workspace').hidden) ensureAttached().catch(handleConnectionFailure);
@@ -73,7 +81,7 @@ const contextSync = new ContextSync(
 );
 function shareWidgetAction(action, details = {}) {
   if (!app || !hostReady || stopped) return;
-  contextSync.update({ activeBoxId:selectedBoxId || null, activeView:byId('manager-browser').hidden ? activeTab : 'catalog', humanHasTerminalControl:owned },action,details);
+  contextSync.update({ activeBoxId:selectedBoxId || null, activeView:byId('manager-browser').hidden ? activeTab : 'catalog', humanHasTerminalControl:owned, humanHasDesktopControl:desktopView.hasControl },action,details);
 }
 function catalogBoxes(data) { return data?.boxes || data?.managers || []; }
 
@@ -332,6 +340,7 @@ async function initializeRenderer() {
 }
 
 function detach() {
+  desktopView.close();
   filesView.setActive(false);
   streamReconnect.cancel();
   focusController?.focus(false).catch(()=>{}); clearTimeout(focusTimer);
@@ -342,6 +351,7 @@ function detach() {
   setControl(false);
 }
 async function start(value) {
+  if (value?.view === 'desktop') { await openFileWorkspace(value); return; }
   if (value?.view === 'files') { await openFileWorkspace(value); return; }
   if (value?.view === 'attention') {
     if (byId('workspace').hidden && byId('manager-browser').hidden) await refreshManagers();
@@ -512,7 +522,7 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.5.2' }, {}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.6.0' }, {}, { autoResize: false });
     app.onhostcontextchanged=resizeWidget;
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;
@@ -521,7 +531,7 @@ try {
     app.onteardown = async () => { cleanupWorkspace(); return {}; };
     await app.connect(undefined, { timeout: 15000 });
     hostReady = true; shareWidgetAction('workspace_ready');
-    share.hidden = activeTab === 'files';
+    share.hidden = activeTab !== 'terminal';
     resizeWidget();
     await refreshInbox();
   } else {
@@ -610,7 +620,7 @@ byId('refresh-inbox').onclick = refreshInbox;
 function cleanupWorkspace() {
   if (stopped) return;
   stopped = true; clearTimeout(inboxTimer); clearTimeout(fitTimer); streamReconnect.cancel();
-  socket?.close(); closeApp(); filesView.close(); rendererCleanup?.();
+  socket?.close(); closeApp(); filesView.close(); desktopView.close(); rendererCleanup?.();
 }
 window.addEventListener('pagehide',cleanupWorkspace,{ once:true });
 byId('detach-terminal').onclick = () => {
@@ -666,17 +676,24 @@ async function selectWorkspaceTab(tab,filePath) {
   const id = selectedBoxId;
   if (!id) return;
   await yieldInput();
+  if(tab!=='desktop')await desktopView.close();
   activeTab = tab;
   byId('files-pane').hidden = tab !== 'files';
+  byId('desktop-pane').hidden = tab !== 'desktop';
   byId('viewport').hidden = tab !== 'terminal';
   document.querySelector('.toolbar').hidden = tab !== 'terminal';
   byId('task-details').hidden = tab !== 'terminal';
   byId('message-form').hidden = tab !== 'terminal';
-  share.hidden = !app || tab === 'files';
+  share.hidden = !app || tab !== 'terminal';
   byId('terminal-tab').setAttribute('aria-selected',String(tab === 'terminal'));
   byId('files-tab').setAttribute('aria-selected',String(tab === 'files'));
+  byId('desktop-tab').setAttribute('aria-selected',String(tab === 'desktop'));
   filesView.setActive(tab === 'files');
-  if (tab === 'files') {
+  if(tab==='desktop') {
+    byId('hint').textContent='Desktop graphics stay in this widget, outside model context. Leaving this tab disconnects the desktop.';
+    status.textContent='Desktop';
+    await desktopView.open(id);
+  } else if (tab === 'files') {
     byId('hint').textContent='Read a file, share it with chat, or return to the live terminal.';
     if (!connected) status.textContent = 'Files';
     await filesView.open(id,filePath);
@@ -692,7 +709,8 @@ async function selectWorkspaceTab(tab,filePath) {
   }
 }
 async function openFileWorkspace(value) {
-  if (!value.boxId || !value.file?.path) throw new Error('File view needs a box ID and path.');
+  const desktop=value.view==='desktop';
+  if (!value.boxId || (!desktop&&!value.file?.path)) throw new Error('View needs a box ID and file path when opening a file.');
   await yieldInput();
   if (selectedBoxId !== value.boxId) {
     detach();
@@ -703,12 +721,12 @@ async function openFileWorkspace(value) {
   resizeWidget();
   const box=catalogBoxes(managerCatalog).find(box=>box.id===selectedBoxId);
   selectedName=box?.name||selectedBoxId;
-  byId('box-title').textContent=selectedName;byId('box-state').textContent=box?describeBox(box):'File view';
+  byId('box-title').textContent=selectedName;byId('box-state').textContent=box?describeBox(box):(desktop?'Desktop view':'File view');
   byId('session').textContent=`${value.project} / ${selectedBoxId}`;
   byId('message-target').textContent=`Send instruction to ${selectedName} · ${selectedBoxId}`;
   byId('box-task').textContent=box?.task||'Work and files stay in this box.';
   renderReceipts();
-  await selectWorkspaceTab('files',value.file.path);
+  await selectWorkspaceTab(desktop?'desktop':'files',value.file?.path);
 }
 async function downloadBoxFile(file) {
   if (app) { const result=await app.downloadFile({contents:[{type:'resource_link',uri:file.uri,name:file.name,mimeType:file.mimeType,size:file.size}]}); if(result.isError)throw new Error('Download cancelled or unavailable in this host.');return; }
@@ -719,3 +737,4 @@ async function downloadBoxFile(file) {
 }
 byId('files-tab').onclick=()=>selectWorkspaceTab('files').catch(report);
 byId('terminal-tab').onclick=()=>selectWorkspaceTab('terminal').catch(report);
+byId('desktop-tab').onclick=()=>selectWorkspaceTab('desktop').catch(report);
