@@ -182,3 +182,28 @@ attachment, take/release control, and detach back to the overview. The temporary
 test box was archived afterwards. No direct HTTP requests from the iframe or
 browser exceptions occurred during the final interaction check. Native Codex
 and Claude validation of this expanded flow is still pending.
+
+## Keeping the desktop assistant in sync
+
+The `list_boxes` result uses `boxes` and explicitly labels its adapter-tagged
+scope. A manager is a box with the coordinator role, not an extra session inside
+a task box. `managerId` remains the historical box-ID parameter for existing
+tools. UI-opening tool descriptions distinguish rendering a widget from reading
+a text snapshot. A successful tool response alone does not prove host rendering.
+
+Canvas launch/open/archive, instruction delivery (including uncertain delivery),
+and terminal ownership actions now send bounded, recent action receipts and the
+active box ID through the MCP Apps `updateModelContext` bridge. Returning to the
+catalog clears the active selection. User text excerpts are capped at 2000
+characters and labeled as untrusted data. Raw terminal keystrokes and credential
+values are not included. Full terminal output still requires the explicit Share
+output action. Context updates are serialized, and rejection never retries the
+underlying launch or instruction. The footer reports context synchronization
+failure without blocking work.
+
+These are context updates for a subsequent chat turn; they do not force the
+host to run the model or send a new chat message. The host must support MCP Apps
+context updates. Refresh/reconnect the desktop MCP connection after an upgrade
+so its tool descriptions are current. `npm test` checks context ordering and
+host rejection; an opaque iframe bridge check also verified selection updates
+and clearing the active selection without writing to any box.

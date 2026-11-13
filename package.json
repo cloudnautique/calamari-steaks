@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build-ui.mjs",
+    "test": "node --test web/context.test.js",
     "check": "node --check web/app.js && node --check scripts/build-ui.mjs"
   },
   "dependencies": {

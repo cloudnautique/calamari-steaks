@@ -1,3 +1,4 @@
+import { ContextSync } from "./context.js";
 import { App } from "@modelcontextprotocol/ext-apps";
 import { Terminal, FitAddon, Ghostty } from "ghostty-web";
 import wasmBytes from "ghostty-web/ghostty-vt.wasm";
@@ -12,7 +13,17 @@ let appTerminal, generation = 0, rendererReady, pendingMessage, createRequestId;
 let managerCatalog, selectedBoxId, selectedName, activeTab = 'overview', inboxBusy = false;
 let stopped = false, inboxTimer, outputGeneration = 0, launchIntent, rendererCleanup;
 const receipts = new Map(), drafts = new Map(), uncertainBoxes = new Set(), pendingBoxes = new Set();
-let inputQueue = Promise.resolve();
+let inputQueue = Promise.resolve(), hostReady = false;
+const contextSync = new ContextSync(
+  params => app.updateModelContext(params, { timeout: 2500 }),
+  message => { byId('context-status').textContent = message; }
+);
+function shareWidgetAction(action, details = {}) {
+  if (!app || !hostReady || stopped) return;
+  contextSync.update({ activeBoxId:selectedBoxId || null, activeView:byId('manager-browser').hidden ? activeTab : 'catalog', humanHasTerminalControl:owned },action,details);
+}
+function catalogBoxes(data) { return data?.boxes || data?.managers || []; }
+
 
 function report(error) {
   notice.textContent = error instanceof Error ? error.message : String(error);
@@ -24,6 +35,7 @@ function setControl(value) {
   byId('message').disabled = pendingBoxes.has(selectedBoxId);
   byId('send-message').disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId);
   byId('browse').disabled = value;
+  shareWidgetAction('terminal_control_changed',{ boxId:selectedBoxId || null,owned:value });
   byId('message').placeholder = 'Give this box an instruction…';
   control.textContent = owned ? 'Release control' : 'Take control';
   control.setAttribute('aria-pressed', String(owned));
@@ -223,7 +235,7 @@ async function start(value) {
     byId('inbox').hidden = false;
     await refreshInbox(); return;
   }
-  if (value?.view === 'managers' || value?.view === 'boxes' || value?.managers) { showManagers(value); return; }
+  if (value?.view === 'managers' || value?.view === 'boxes' || value?.boxes || value?.managers) { showManagers(value); return; }
   if (!value?.session?.box) throw new Error('Choose a manager to open its terminal.');
   if (owned && connection?.session?.box !== value.session.box) throw new Error('Release control before switching managers.');
   if (selectedBoxId === value.session.box && !byId('workspace').hidden) return;
@@ -233,7 +245,7 @@ async function start(value) {
   byId('manager-browser').hidden = true;
   byId('workspace').hidden = false;
   selectedBoxId = value.session.box;
-  const box = managerCatalog?.managers?.find(item => item.id === selectedBoxId);
+  const box = catalogBoxes(managerCatalog).find(item => item.id === selectedBoxId);
   selectedName = box?.name || selectedBoxId;
   byId('box-title').textContent = selectedName;
   byId('box-state').textContent = box ? describeBox(box) : 'Inspecting the last reported state';
@@ -243,6 +255,7 @@ async function start(value) {
   byId('output').textContent = 'Reading output…';
   await selectTab(value.view === 'terminal' ? 'terminal' : 'overview');
   refreshOutput().catch(report);
+  shareWidgetAction('box_opened',{ boxId:selectedBoxId,role:box?.role || 'unknown' });
 }
 
 async function workspaceCall(name, args = {}) {
@@ -270,9 +283,10 @@ function showManagers(data) {
   byId('viewport').hidden = true;
   byId('message-form').hidden = true;
   status.textContent = 'Boxes';
+  shareWidgetAction('catalog_opened',{ boxes:catalogBoxes(data).map(box => ({ boxId:box.id,role:box.role,archived:box.archived })) });
   byId('hint').textContent = `Project ${data.project || connection?.session?.project || 'default'} · Closing a view leaves its boxes in Discobox. Selecting a box does not wake it.`;
   const list = byId('manager-list'); list.replaceChildren();
-  const visible = (data.managers || []).filter((manager) => !manager.archived || byId('show-archived').checked);
+  const visible = catalogBoxes(data).filter((manager) => !manager.archived || byId('show-archived').checked);
   if (!visible.length) { const empty = document.createElement('p'); empty.textContent = 'No active boxes yet. Start a task above, or show archived boxes.'; list.append(empty); }
   for (const manager of visible) {
     const card = document.createElement('article'); card.className = 'manager-card';
@@ -292,7 +306,7 @@ function showManagers(data) {
       archive.onclick = async () => {
         if (archive.dataset.confirm !== 'yes') { archive.dataset.confirm = 'yes'; archive.textContent = 'Confirm archive'; return; }
         archive.disabled = true;
-        try { await workspaceCall('archive_manager', { managerId: manager.id }); await refreshManagers(); } catch (error) { report(error); archive.disabled = false; }
+        try { await workspaceCall('archive_manager', { managerId: manager.id }); shareWidgetAction('archive_requested',{ boxId:manager.id }); await refreshManagers(); } catch (error) { report(error); archive.disabled = false; }
       };
       actions.append(archive);
     }
@@ -317,6 +331,7 @@ byId('create-button').onclick = async (event) => {
   let created;
   try {
     created = await workspaceCall('launch_box', launchIntent);
+    shareWidgetAction('box_launched',{ boxId:created.boxId || created.managerId, task:launchIntent.task.slice(0,2000), taskTruncated:launchIntent.task.length > 2000 });
   } catch (error) {
     report(error); button.textContent = 'Check same creation'; return;
   } finally { button.disabled = false; }
@@ -340,11 +355,13 @@ byId('send-message').onclick = async (event) => {
   try {
     if (owned) await send({ type: 'message', text });
     else await workspaceCall('send_manager', { managerId: id, text, submit: true });
+    shareWidgetAction('instruction_delivered',{ boxId:id,text:text.slice(0,2000),textTruncated:text.length > 2000 });
     const history = receipts.get(id) || []; history.push(text); receipts.set(id,history.slice(-20));
     drafts.delete(id);
     if (id === selectedBoxId) { input.value = ''; renderReceipts(); byId('hint').textContent = 'Instruction delivered. Refresh output to follow the response.'; }
   } catch (error) {
     report(error); uncertainBoxes.add(id);
+    shareWidgetAction('instruction_delivery_uncertain',{ boxId:id });
     if (id === selectedBoxId) byId('hint').textContent = 'Delivery was not confirmed. Inspect output before retrying; input is never replayed automatically.';
   }
   finally { pendingBoxes.delete(id); input.disabled = pendingBoxes.has(selectedBoxId); button.disabled = uncertainBoxes.has(selectedBoxId) || pendingBoxes.has(selectedBoxId); }
@@ -385,6 +402,7 @@ try {
     };
     app.onteardown = async () => { cleanupWorkspace(); return {}; };
     await app.connect(undefined, { timeout: 15000 });
+    hostReady = true; shareWidgetAction('workspace_ready');
     share.hidden = false;
     await app.sendSizeChanged({ height: 720 });
     await refreshInbox();
@@ -452,7 +470,7 @@ async function refreshInbox() {
   try {
     const { inbox } = await workspaceCall('list_attention');
     if (inbox.boxes) {
-      managerCatalog = { ...managerCatalog,managers:inbox.boxes };
+      managerCatalog = { ...managerCatalog,boxes:inbox.boxes };
       if (selectedBoxId) {
         const current = inbox.boxes.find(box => box.id === selectedBoxId);
         if (current) byId('box-state').textContent = describeBox(current);

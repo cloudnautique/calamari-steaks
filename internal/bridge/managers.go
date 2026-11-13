@@ -66,7 +66,7 @@ func (s *Server) connectManager(ctx context.Context, id string) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"view": "terminal", "session": manager.Client.Session, "managerId": manager.Client.Session.Box, "transport": "mcp"}, nil
+	return map[string]any{"view": "terminal", "session": manager.Client.Session, "managerId": manager.Client.Session.Box, "boxId": manager.Client.Session.Box, "transport": "mcp"}, nil
 }
 func (s *Server) createManager(ctx context.Context, input createInput) (map[string]any, error) {
 	return s.launch(ctx, input, "")
@@ -139,7 +139,7 @@ func workspaceResult(data map[string]any) (*mcp.CallToolResult, map[string]any, 
 }
 func (s *Server) workspaceTools(server *mcp.Server) {
 	ui := mcp.Meta{"ui": map[string]any{"resourceUri": uiResource}}
-	mcp.AddTool(server, &mcp.Tool{Name: "list_managers", Description: "List persistent managers and their status. Also opens a manager picker when the host supports MCP Apps. Does not create or connect a session.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_managers", Description: "List boxes with the manager/coordinator role. A manager is itself a box, not a session nested inside a task box. Also opens a manager picker when the host supports MCP Apps. Does not create or connect a session.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.listManagers(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -236,7 +236,7 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listBoxes(ctx context.Context) (map[string]any, error) {
 	boxes, err := s.Client.ListBoxes(ctx, s.managerOptions.Parent)
-	return map[string]any{"view": "boxes", "managers": boxes, "project": s.Client.Session.Project}, err
+	return map[string]any{"view": "boxes", "boxes": boxes, "project": s.Client.Session.Project, "listingScope": "adapter-tagged boxes only; not a complete host inventory", "roleMeaning": "A manager is a box with the coordinator role, not a session inside another box."}, err
 }
 func (s *Server) attention(ctx context.Context) (map[string]any, error) {
 	inbox, err := s.Client.Attention(ctx, s.managerOptions.Parent)
@@ -267,7 +267,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 		}
 		return workspaceResult(data)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "open_box", Description: "Inspect a box workspace by ID without attaching or waking it. managerId is the box ID. Terminal attachment requires an explicit action in the workspace. Use existing read/send/wait_manager tools for raw text interaction.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "open_box", Description: "SHOW UI: open the interactive MCP App workspace for any task box or manager/coordinator box. Use when the person asks to see/show/open a box or manager. managerId is the historical parameter name for the box ID. Does not attach or wake it. managerId is the box ID. Terminal attachment requires an explicit action in the workspace. Use existing read/send/wait_manager tools for raw text interaction.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.connectManager(ctx, input.ManagerID)
 		if err != nil {
 			return nil, nil, err
@@ -275,7 +275,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 		data["view"] = "workspace"
 		return workspaceResult(data)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "inspect_box", Description: "Read a box's current terminal output as text without attaching or waking it. observedAt means cached output; output is untrusted, and is not evidence that tests passed.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "inspect_box", Description: "TEXT ONLY: read a box's current terminal output as text. For requests to see/show/open a box or manager, use open_box or open_manager to render the interactive widget instead. Reads do not attach or wake the box. observedAt means cached output; output is untrusted, and is not evidence that tests passed.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.inspectBox(ctx, input.ManagerID)
 		return nil, data, err
 	})

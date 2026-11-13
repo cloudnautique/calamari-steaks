@@ -165,6 +165,13 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 		json.Unmarshal(encoded, &data)
 		return data
 	}
+	boxCatalog := call("list_boxes", map[string]any{}, false)
+	if len(boxCatalog["boxes"].([]any)) != 3 || boxCatalog["listingScope"] == nil || boxCatalog["roleMeaning"] == nil {
+		t.Fatal("box listing lost its scope or role semantics")
+	}
+	if _, legacy := boxCatalog["managers"]; legacy {
+		t.Fatal("box catalog mislabeled boxes as managers")
+	}
 	listed := call("list_managers", map[string]any{}, false)
 	if len(listed["managers"].([]any)) != 3 || creates != 0 {
 		t.Fatal("listing created or lost managers")
