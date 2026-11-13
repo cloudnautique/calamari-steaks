@@ -21,7 +21,10 @@ footer { border-top: 1px solid var(--line); color: var(--text-faint); font-size:
 #hint { color: var(--text-muted); }
 #notice { margin: 0; padding: var(--space-3) var(--space-4); color: var(--warn); background: var(--ink-raised); font-size: 13px; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
-#manager-browser { flex: 1; overflow: auto; padding: var(--space-4); }
+#manager-browser { flex: 1 1 0; min-height: 0; overflow: auto; padding: var(--space-4); }
+main:has(#manager-browser:not([hidden])) { height: min(520px,100dvh,var(--app-max-height,100dvh)); }
+#launch-panel { margin: 14px 0; }
+#launch-panel > summary { color: var(--magenta); }
 .browser-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 h1 { font-size: 20px; margin: 0 0 6px; }
 .browser-heading p, .muted { color: var(--text-muted); font-size: 12px; }

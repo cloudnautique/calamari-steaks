@@ -12,3 +12,8 @@ export function hostHeight(context) {
   const value=size?.height ?? size?.maxHeight;
   return Number.isFinite(value)&&value>0?Math.floor(value):undefined;
 }
+
+export function widgetHeight(context, catalog) {
+  const available=hostHeight(context);
+  return catalog?Math.min(520,available ?? 520):(available ?? 720);
+}

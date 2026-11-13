@@ -284,3 +284,9 @@ screen requests, and distinguish transport drops from process exit. An opaque
 iframe check verifies automatic attachment, fresh bytes repainting the renderer,
 and reconnecting after an injected read failure without input writes or snapshot
 requests. The injected bytes are test fixtures, not output from the research box.
+
+The box catalog requests at most 520px of height (less in a constrained host)
+and scrolls internally, independent of the box count. The launcher is collapsed
+under Start a new box. Terminal and file workspaces retain their own sizing.
+A 100-box opaque-iframe check verified bounded height, internal scrolling,
+launcher expansion, and a narrow 360px-high host without page overflow.

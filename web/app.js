@@ -1,7 +1,7 @@
 import { FilesView } from "./files-view.js";
 import { StreamReconnect, canReconnect } from "./stream-reconnect.js";
 import { FocusControl } from "./focus-control.js";
-import { fittedDimensions, hostHeight } from "./terminal-layout.js";
+import { fittedDimensions, widgetHeight } from "./terminal-layout.js";
 import { ContextSync } from "./context.js";
 import { sendToChat } from "./chat-share.js";
 import { App } from "@modelcontextprotocol/ext-apps";
@@ -19,6 +19,17 @@ let managerCatalog, selectedBoxId, selectedName, activeTab = 'terminal', inboxBu
 let stopped = false, inboxTimer, launchIntent, rendererCleanup;
 const receipts = new Map(), drafts = new Map(), uncertainBoxes = new Set(), pendingBoxes = new Set();
 let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, focusController, focusTimer, attaching, pendingControl;
+let requestedWidgetHeight;
+function resizeWidget() {
+  if(!app)return;
+  const height=widgetHeight(app.getHostContext(),!byId('manager-browser').hidden);
+  document.documentElement.style.setProperty('--app-max-height',`${height}px`);
+  if(hostReady && height!==requestedWidgetHeight) {
+    requestedWidgetHeight=height;
+    app.sendSizeChanged({height}).catch(report);
+  }
+  scheduleFit();
+}
 const filesView = new FilesView({
   call: (name,args) => workspaceCall(name,args),
   activity: shareWidgetAction,
@@ -346,6 +357,7 @@ async function start(value) {
   byId('session').textContent = `${value.session.project} / ${value.session.box} / ${value.session.exec}`;
   byId('manager-browser').hidden = true;
   byId('workspace').hidden = false;
+  resizeWidget();
   byId('message-form').hidden = false;
   selectedBoxId = value.session.box;
   configureFocusControl(selectedBoxId);
@@ -385,6 +397,7 @@ function showManagers(data) {
   notice.hidden = true;
   byId('manager-browser').hidden = false;
   byId('workspace').hidden = true;
+  resizeWidget();
   selectedBoxId = undefined;
   document.querySelector('.toolbar').hidden = true;
   byId('viewport').hidden = true;
@@ -499,25 +512,17 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.5.1' }, {}, { autoResize: false });
-    const applyHostLayout=context=>{
-      const height=hostHeight(context);
-      if(height)document.documentElement.style.setProperty('--app-max-height',`${height}px`);
-      else document.documentElement.style.removeProperty('--app-max-height');
-      scheduleFit();
-    };
-    app.onhostcontextchanged=()=>applyHostLayout(app.getHostContext());
+    app = new App({ name: 'Discobox workspace', version: '0.5.2' }, {}, { autoResize: false });
+    app.onhostcontextchanged=resizeWidget;
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;
       if (value?.session || value?.view) start(value).catch(report);
     };
     app.onteardown = async () => { cleanupWorkspace(); return {}; };
     await app.connect(undefined, { timeout: 15000 });
-    applyHostLayout(app.getHostContext());
     hostReady = true; shareWidgetAction('workspace_ready');
     share.hidden = activeTab === 'files';
-    const desiredHeight=hostHeight(app.getHostContext()) || 720;
-    await app.sendSizeChanged({ height: desiredHeight });
+    resizeWidget();
     await refreshInbox();
   } else {
     const token = new URLSearchParams(location.hash.slice(1)).get('token');
@@ -695,6 +700,7 @@ async function openFileWorkspace(value) {
     selectedBoxId=value.boxId;configureFocusControl(selectedBoxId);
   }
   byId('manager-browser').hidden=true;byId('workspace').hidden=false;
+  resizeWidget();
   const box=catalogBoxes(managerCatalog).find(box=>box.id===selectedBoxId);
   selectedName=box?.name||selectedBoxId;
   byId('box-title').textContent=selectedName;byId('box-state').textContent=box?describeBox(box):'File view';

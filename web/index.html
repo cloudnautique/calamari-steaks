@@ -14,6 +14,7 @@
     </header>
     <section id="manager-browser" hidden>
       <div class="browser-heading"><div><h1>What would you like to work on?</h1><p>Choose a harness, give it a task, and follow the work in its own box.</p></div><button id="refresh-managers">Refresh boxes</button></div>
+      <details id="launch-panel"><summary>Start a new box</summary>
       <div id="create-manager" role="form" aria-label="Launch a task">
         <label for="task">Task</label><textarea id="task" rows="3" maxlength="65536" placeholder="What should the agent do?" required></textarea>
         <div class="launch-fields"><div><label for="manager-name">Box name <small>(optional)</small></label><input id="manager-name" placeholder="release-review" maxlength="64" pattern="[A-Za-z0-9_-]+"></div><div><label for="harness">Harness</label><input id="harness" placeholder="Project default" maxlength="128" list="harness-examples"><datalist id="harness-examples"><option value="codex"><option value="claude"></datalist></div></div>
@@ -21,6 +22,7 @@
         <p class="muted">Starts with an empty workspace. Repository source delivery is not available in this launcher yet. Uses the harness's configured access; does not grant Discobox API access or add credential bindings.</p>
         <button id="create-button" type="button" class="primary">Start box</button><p id="creation-intent" class="muted" hidden></p>
       </div>
+      </details>
       <div class="browser-heading"><h2>Your boxes</h2><label class="muted"><input id="show-archived" type="checkbox"> Show archived</label></div>
       <div id="manager-list" aria-live="polite"></div>
     </section>
