@@ -28,8 +28,11 @@ connection requires one. The token field is sensitive and passed via environment
 never included in the bundle. Install settings cannot grant backend permissions.
 
 Peer connections retain the adapter's existing per-user enrollment identity;
-that peer must be enrolled in Discobox. Socket access uses the desktop user's
-permissions. `--local` means sandbox pool-forwarded access, so this host extension
+that peer must be enrolled in Discobox. The desktop user must be able to open the socket, but socket access alone
+does not authenticate to Discobox. A server requiring authentication still needs
+a supported authorized connection (for example an enrolled Iroh peer). The optional
+token setting only applies to deployments that accept that credential; it is not
+a promise of built-in bearer-token login. `--local` means sandbox pool-forwarded access, so this host extension
 uses an explicit connection URL instead. No installation-specific socket, peer,
 credential, or sandbox ID is baked into the release.
 
