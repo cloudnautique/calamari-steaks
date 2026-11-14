@@ -1,0 +1,63 @@
+{
+  "manifest_version": "0.3",
+  "name": "discobox-mcp",
+  "display_name": "Discobox",
+  "version": "0.8.0",
+  "description": "Launch and work with Discobox boxes through live terminals, files, and desktop views.",
+  "author": {
+    "name": "cloudnautique"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cloudnautique/calamari-steaks.git"
+  },
+  "tools_generated": true,
+  "server": {
+    "type": "binary",
+    "entry_point": "server/discobox-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/discobox-mcp",
+      "args": [
+        "--browse",
+        "--transport",
+        "stdio",
+        "--discobox",
+        "${user_config.endpoint}",
+        "--project",
+        "${user_config.project}"
+      ],
+      "env": {
+        "DISCOBOX_MCP_TOKEN": "${user_config.api_token}",
+        "DISCOBOX_MCP_ENDPOINT": ""
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "darwin"
+    ]
+  },
+  "user_config": {
+    "endpoint": {
+      "type": "string",
+      "title": "Discobox connection URL",
+      "description": "Your host's unix:///absolute/path/to/server.sock, an HTTP(S) API origin, or an enrolled discobox:// peer URL. This is the Discobox API, not the adapter's /mcp endpoint.",
+      "required": true
+    },
+    "project": {
+      "type": "string",
+      "title": "Discobox project",
+      "default": "default",
+      "required": true,
+      "description": "The Discobox project whose boxes you want to work with."
+    },
+    "api_token": {
+      "type": "string",
+      "title": "Discobox API token (if required)",
+      "description": "Optional upstream Discobox API credential. This is not the bearer token for a separately running MCP adapter.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    }
+  }
+}

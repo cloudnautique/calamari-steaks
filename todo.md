@@ -236,3 +236,10 @@ view selection respects human input ownership and does not focus or type.
 Opaque-frame checks cover missing key codes, single paste, Unicode/multiline,
 clipboard-denied fallback, context privacy, and app-tool view changes. Native
 clipboard/client app-tool exposure remain to verify; see docs/terminal-input.md.
+
+## Desktop extension packaging
+
+- [x] Build explicit-file MCPB bundles with the compiled stdio adapter and embedded UI.
+- [x] Configure upstream connection, project, and optional sensitive API token at install time.
+- [x] Validate Apple Silicon/Intel manifests and archive contents; smoke-test extracted native Linux ARM64 bundle (37 tools and workspace resource).
+- [ ] Test unsigned MCPB installation and live host connection in Claude Desktop on macOS.

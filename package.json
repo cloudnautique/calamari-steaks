@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node scripts/build-ui.mjs",
     "test": "node --test web/*.test.js",
-    "check": "node --check web/app.js && node --check scripts/build-ui.mjs"
+    "check": "node --check web/app.js && node --check scripts/build-ui.mjs",
+    "package:mcpb": "node scripts/package-mcpb.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "2.0.4",
@@ -15,6 +16,7 @@
     "marked": "18.2.0"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2",
     "esbuild": "0.28.2"
   }
 }
