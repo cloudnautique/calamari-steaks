@@ -69,3 +69,18 @@ Go tests cover server-view metadata, scoped box access, invalid selections, and
 Files/Desktop navigation without primary-exec discovery. Node tests cover
 clipboard shortcut recognition, bounds, preserved content, and navigation guards.
 Native client checks remain pending, especially the reported stray `u` symptom.
+
+## Canvas sizing
+
+Fixed host `containerDimensions.height` is allocated space and is used even when
+`displayMode` is absent or says inline. Maximum-only inline containers remain
+compact at 520px; fullscreen and picture-in-picture containers follow their
+actual iframe viewport, within the host maximum. The box catalog follows the
+same rule instead of imposing its own 520px cap in an expanded canvas. Terminal,
+Files and Desktop use the remaining flex space below workspace controls.
+
+An opaque-frame browser check verified full Files/footer height at 1120px,
+terminal resize from 56 rows at 1120px to 25 rows at 650px, a 1060px expanded
+picture-in-picture catalog, and a return to the compact 520px inline catalog.
+Native Codex canvas behavior still needs confirmation. Resource v12 retains all
+older resource URI aliases so restored views remain readable.

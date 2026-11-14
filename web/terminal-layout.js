@@ -15,11 +15,12 @@ export function hostHeight(context) {
 
 export function widgetHeight(context, catalog, viewportHeight) {
   const available=hostHeight(context);
-  // Missing displayMode is treated as inline. A host's generous maximum is
-  // permission to use space, not a request to fill the conversation thread.
-  if(catalog || context?.displayMode!=='fullscreen')return Math.min(520,available ?? 520);
+  // A fixed dimension is allocated space, whereas maxHeight is just a limit.
+  // Canvas hosts can allocate a fixed pane without advertising a display mode.
   const fixed=context?.containerDimensions?.height;
   if(Number.isFinite(fixed)&&fixed>0)return Math.floor(fixed);
+  const expanded=context?.displayMode==='fullscreen'||context?.displayMode==='pip';
+  if(!expanded)return Math.min(520,available ?? 520);
   const viewport=Number.isFinite(viewportHeight)&&viewportHeight>0?Math.floor(viewportHeight):720;
   return Math.min(viewport,available ?? viewport);
 }

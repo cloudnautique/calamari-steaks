@@ -243,3 +243,5 @@ clipboard/client app-tool exposure remain to verify; see docs/terminal-input.md.
 - [x] Configure upstream connection, project, and optional sensitive API token at install time.
 - [x] Validate Apple Silicon/Intel manifests and archive contents; smoke-test extracted native Linux ARM64 bundle (37 tools and workspace resource).
 - [ ] Test unsigned MCPB installation and live host connection in Claude Desktop on macOS.
+
+- [x] Honor fixed host canvas heights and picture-in-picture sizing for workspaces and catalog; preserve compact inline max-height-only widgets. Browser fixture verified terminal rows grow/shrink with the pane.
