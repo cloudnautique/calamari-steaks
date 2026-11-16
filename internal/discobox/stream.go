@@ -18,15 +18,17 @@ import (
 
 // Wire values follow discobox/pkg/execstream/frame at reference commit e9444637.
 const (
-	Input    byte = 0
-	Stdout   byte = 1
-	Stderr   byte = 2
-	Resize   byte = 3
-	Error    byte = 5
-	Exit     byte = 6
-	Ready    byte = 8
-	Repaint  byte = 14
-	maxFrame      = 16 << 20
+	Input       byte = 0
+	Stdout      byte = 1
+	Stderr      byte = 2
+	Resize      byte = 3
+	Error       byte = 5
+	Exit        byte = 6
+	CloseInput  byte = 7
+	CloseOutput byte = 13
+	Ready       byte = 8
+	Repaint     byte = 14
+	maxFrame         = 16 << 20
 )
 
 type Stream struct {

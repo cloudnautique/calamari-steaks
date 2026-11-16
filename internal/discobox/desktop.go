@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -84,10 +85,15 @@ func (c *Client) DialDesktop(ctx context.Context, id, parent string) (net.Conn, 
 }
 
 func (c *Client) dialDesktopTCP(ctx context.Context, info DesktopInfo) (net.Conn, error) {
-	route := "/api/projects/" + info.Project + "/sandboxes/" + info.BoxID + "/tcp/attach"
-	query := url.Values{"host": []string{"127.0.0.1"}, "port": []string{strconv.Itoa(info.Port)}}
+	return c.dialTCP(ctx, info.BoxID, "127.0.0.1", info.Port)
+}
+func (c *Client) dialTCP(ctx context.Context, id, host string, port int) (net.Conn, error) {
+	route := "/api/projects/" + c.Session.Project + "/sandboxes/" + id + "/tcp/attach"
+	query := url.Values{"host": []string{host}, "port": []string{strconv.Itoa(port)}}
 	client := &http.Client{Transport: c.http.Transport, CheckRedirect: c.http.CheckRedirect}
-	ws, response, err := websocket.Dial(ctx, strings.Replace(c.base, "http", "ws", 1)+route+"?"+query.Encode(), &websocket.DialOptions{HTTPClient: client, HTTPHeader: c.headers()})
+	dialCtx, cancelDial := context.WithTimeout(ctx, 12*time.Second)
+	defer cancelDial()
+	ws, response, err := websocket.Dial(dialCtx, strings.Replace(c.base, "http", "ws", 1)+route+"?"+query.Encode(), &websocket.DialOptions{HTTPClient: client, HTTPHeader: c.headers()})
 	if err != nil {
 		if response != nil && response.Body != nil {
 			response.Body.Close()
@@ -95,7 +101,10 @@ func (c *Client) dialDesktopTCP(ctx context.Context, info DesktopInfo) (net.Conn
 		if response != nil {
 			return nil, &HTTPError{Status: response.StatusCode, Path: route}
 		}
-		return nil, errors.New("desktop TCP tunnel refused or unreachable")
+		return nil, errors.New("TCP tunnel refused or unreachable")
+	}
+	if response != nil && response.Body != nil {
+		response.Body.Close()
 	}
 	ws.SetReadLimit(1 << 20)
 	conn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
@@ -120,10 +129,10 @@ func (c *desktopTunnelConn) Read(data []byte) (int, error) {
 		switch kind {
 		case Stdout:
 			c.pending = body
-		case 13:
+		case CloseOutput:
 			return 0, io.EOF
 		case Error:
-			return 0, errors.New("desktop TCP tunnel ended with an upstream error")
+			return 0, errors.New("TCP tunnel ended with an upstream error")
 		}
 	}
 	n := copy(data, c.pending)
@@ -136,3 +145,6 @@ func (c *desktopTunnelConn) Write(data []byte) (int, error) {
 	}
 	return len(data), nil
 }
+
+// CloseWrite preserves TCP half-close through Discobox framing.
+func (c *desktopTunnelConn) CloseWrite() error { return c.framed.Write(CloseInput, nil) }

@@ -245,3 +245,21 @@ clipboard/client app-tool exposure remain to verify; see docs/terminal-input.md.
 - [ ] Test unsigned MCPB installation and live host connection in Claude Desktop on macOS.
 
 - [x] Honor fixed host canvas heights and picture-in-picture sizing for workspaces and catalog; preserve compact inline max-height-only widgets. Browser fixture verified terminal rows grow/shrink with the pane.
+
+## Connection onboarding implementation
+
+- [x] Start MCP/setup independently of missing local sockets or invalid profiles/keys.
+- [x] Local `unix://` discovery, custom sockets, explicit remote peer enrollment guidance, durable public identity, bounded isolated tests, and offline private profile saving.
+- [x] Independent setup widget and text tools; changed profiles require restart and never retarget open sessions.
+- [x] Optional MCPB install overrides; launcher-pinned connections are read-only.
+- [x] Real stdio bootstrap and opaque-frame widget checks against isolated fixtures.
+- [ ] Validate native Claude/Codex setup, MCPB installation, and two-host Iroh enrollment/relay/revocation.
+
+## Platforms, services and CI
+
+- [x] Windows x64/ARM64 MCPB builds (.exe/win32), named-pipe discovery, Linux x64/ARM64 builds.
+- [x] Service catalog, explicit lifecycle controls, private app logs and explicit text logs.
+- [x] Services tab; validated local TCP forwards, browser links, half-close/HTTP/SSE/WebSocket support, bounded leases/connections and cleanup.
+- [x] GitHub native-platform test and unsigned bundle workflows; manual fixture-only MCPJam conformance. Workflows pass actionlint; GitHub execution awaits publishing the files.
+- [ ] Native Windows/macOS installation, Windows ARM64 execution, and authorized host forwarding acceptance tests.
+- [ ] Hosted authenticated HTTPS service previews, embedded pages, and UDP forwarding.

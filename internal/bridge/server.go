@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cloudnautique/discobox-mcp-ui/internal/connection"
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
 	"github.com/cloudnautique/discobox-mcp-ui/web"
 )
@@ -18,20 +19,24 @@ import (
 // Server owns a catalog on one configured endpoint/project. Connected manager
 // sessions are pinned independently; callers cannot supply upstream URLs.
 type Server struct {
-	Client          *discobox.Client
-	Origin          string
-	token           string
-	allowedOrigins  map[string]bool
-	managersMu      sync.Mutex
-	managers        map[string]*managerConnection
-	managerOptions  discobox.ManagerOptions
-	appMu           sync.Mutex
-	appTerminals    map[string]*appTerminal
-	desktopMu       sync.Mutex
-	desktops        map[string]*desktopSession
-	desktopOpening  int
-	approvalMu      sync.Mutex
-	approvalReviews map[string]approvalReview
+	serviceOpenSlots chan struct{}
+	serviceMu        sync.Mutex
+	serviceForwards  map[string]*serviceForward
+	Client           *discobox.Client
+	Onboarding       *connection.Controller
+	Origin           string
+	token            string
+	allowedOrigins   map[string]bool
+	managersMu       sync.Mutex
+	managers         map[string]*managerConnection
+	managerOptions   discobox.ManagerOptions
+	appMu            sync.Mutex
+	appTerminals     map[string]*appTerminal
+	desktopMu        sync.Mutex
+	desktops         map[string]*desktopSession
+	desktopOpening   int
+	approvalMu       sync.Mutex
+	approvalReviews  map[string]approvalReview
 }
 
 func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string, options discobox.ManagerOptions) (*Server, error) {
@@ -51,7 +56,9 @@ func New(client *discobox.Client, origin string, extraOrigins []string, accessTo
 	}
 	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
 	s.desktops = make(map[string]*desktopSession)
-	if client.Session.Box != "" {
+	s.serviceForwards = make(map[string]*serviceForward)
+	s.serviceOpenSlots = make(chan struct{}, 8)
+	if client != nil && client.Session.Box != "" {
 		s.managers[client.Session.Box] = &managerConnection{Client: client}
 	}
 	for _, origin := range extraOrigins {
@@ -73,7 +80,11 @@ func (s *Server) validToken(token string) bool {
 }
 
 func (s *Server) connection() map[string]any {
-	return map[string]any{"origin": s.Origin, "token": s.token, "session": s.Client.Session}
+	session := discobox.Session{}
+	if s.Client != nil {
+		session = s.Client.Session
+	}
+	return map[string]any{"origin": s.Origin, "token": s.token, "session": session}
 }
 
 // A single lock covers both ownership and writing. A control transfer cannot
@@ -134,6 +145,8 @@ func (s *managerConnection) release(owner string) {
 
 func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	s.setupHTTP(mux)
+	s.serviceHTTP(mux)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' "+strings.Replace(s.Origin, "http", "ws", 1)+"; img-src 'self' data:; font-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'")
 		html, err := web.HTML()
@@ -181,6 +194,10 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/ws") {
+			http.Error(w, "Connection setup required; open /setup using the private link", 503)
+			return
+		}
 		mux.ServeHTTP(w, r)
 	})
 }

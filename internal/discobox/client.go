@@ -50,36 +50,64 @@ func New(endpoint, token string, session Session) (*Client, error) {
 	return newClient(endpoint, token, session)
 }
 
-// newClient also supports the unbound client used during manager creation.
-func newClient(endpoint, token string, session Session) (*Client, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+// DefaultLocalEndpoint shares Discobox's platform resolver, including its
+// explicit DISCOBOX_SERVER_ADDRESS override. It never starts a server.
+func DefaultLocalEndpoint() string { return endpointpkg.DefaultEndpoint() }
+
+// ValidateConnection checks configuration without creating an Iroh transport or dialing.
+func ValidateConnection(endpoint, project string) error {
+	if !identifier.MatchString(project) {
+		return errors.New("invalid project ID")
+	}
+	_, err := parseClientEndpoint(endpoint)
+	return err
+}
+func parseClientEndpoint(endpoint string) (endpointpkg.Endpoint, error) {
+	if endpoint == "unix://" || endpoint == "npipe://" {
+		endpoint = DefaultLocalEndpoint()
+	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("parse Discobox endpoint: %w", err)
+		return endpointpkg.Endpoint{}, fmt.Errorf("parse Discobox endpoint: %w", err)
 	}
 	if u.User != nil || u.ForceQuery || (u.RawQuery != "" && u.Scheme != "discobox") || u.Fragment != "" || u.Opaque != "" {
-		return nil, errors.New("endpoint must not contain credentials, a query or a fragment")
+		return endpointpkg.Endpoint{}, errors.New("endpoint must not contain credentials, a query or a fragment")
 	}
 	switch u.Scheme {
 	case "unix":
 		if u.Host != "" || u.Path == "" {
-			return nil, errors.New("use unix:///absolute/path/to/server.sock")
+			return endpointpkg.Endpoint{}, errors.New("use unix:///absolute/path/to/server.sock")
 		}
-		transport.Proxy = nil
+	case "npipe":
+		if u.Host != "" || !strings.HasPrefix(u.Path, "//./pipe/") || len(u.Path) <= len("//./pipe/") {
+			return endpointpkg.Endpoint{}, errors.New("use npipe:////./pipe/discobox for a local Windows named pipe")
+		}
 	case "http", "https":
 		if u.Host == "" || (u.Path != "" && u.Path != "/") {
-			return nil, errors.New("HTTP endpoint must be an origin without a path")
+			return endpointpkg.Endpoint{}, errors.New("HTTP endpoint must be an origin without a path")
 		}
 	case "discobox":
 		if _, err := peerEndpoint(endpoint); err != nil {
-			return nil, err
+			return endpointpkg.Endpoint{}, err
 		}
 	default:
-		return nil, errors.New("endpoint must use http, https, unix or discobox")
+		return endpointpkg.Endpoint{}, errors.New("endpoint must use http, https, unix, npipe or discobox")
 	}
-	parsed, err := endpointpkg.Parse(endpoint)
+	return endpointpkg.Parse(endpoint)
+}
+
+// newClient also supports the unbound client used during manager creation.
+func newClient(endpoint, token string, session Session) (*Client, error) {
+	if endpoint == "unix://" || endpoint == "npipe://" {
+		endpoint = DefaultLocalEndpoint()
+	}
+	parsed, err := parseClientEndpoint(endpoint)
 	if err != nil {
 		return nil, err
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if parsed.Scheme == "unix" || parsed.Scheme == "npipe" {
+		transport.Proxy = nil
 	}
 	base, client, err := endpointpkg.HTTPClient(parsed, transport)
 	if err != nil {

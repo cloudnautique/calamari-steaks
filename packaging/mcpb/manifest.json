@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "discobox-mcp",
   "display_name": "Discobox",
-  "version": "0.8.0",
+  "version": "0.10.0",
   "description": "Launch and work with Discobox boxes through live terminals, files, and desktop views.",
   "author": {
     "name": "cloudnautique"
@@ -20,15 +20,12 @@
       "args": [
         "--browse",
         "--transport",
-        "stdio",
-        "--discobox",
-        "${user_config.endpoint}",
-        "--project",
-        "${user_config.project}"
+        "stdio"
       ],
       "env": {
         "DISCOBOX_MCP_TOKEN": "${user_config.api_token}",
-        "DISCOBOX_MCP_ENDPOINT": ""
+        "DISCOBOX_MCP_ENDPOINT": "${user_config.endpoint}",
+        "DISCOBOX_MCP_PROJECT": "${user_config.project}"
       }
     }
   },
@@ -40,16 +37,17 @@
   "user_config": {
     "endpoint": {
       "type": "string",
-      "title": "Discobox connection URL",
-      "description": "Your host's unix:///absolute/path/to/server.sock, an HTTP(S) API origin, or an enrolled discobox:// peer URL. This is the Discobox API, not the adapter's /mcp endpoint.",
-      "required": true
+      "title": "Connection override (optional)",
+      "description": "Leave blank for guided setup and the saved profile, or the default local endpoint on first launch. Advanced: pin a Unix socket/Windows named pipe, HTTP(S) API origin, or enrolled discobox:// peer. An override disables profile editing in the widget.",
+      "required": false,
+      "default": ""
     },
     "project": {
       "type": "string",
-      "title": "Discobox project",
-      "default": "default",
-      "required": true,
-      "description": "The Discobox project whose boxes you want to work with."
+      "title": "Project override (optional)",
+      "default": "",
+      "required": false,
+      "description": "Leave blank to use the setup widget and its saved profile (default project: default). A nonempty override pins this launcher configuration."
     },
     "api_token": {
       "type": "string",

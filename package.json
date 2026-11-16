@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node scripts/build-ui.mjs",
     "test": "node --test web/*.test.js",
-    "check": "node --check web/app.js && node --check scripts/build-ui.mjs",
+    "check": "node --check web/app.js && node --check web/onboarding.js && node --check web/services-view.js && node --check scripts/build-ui.mjs",
     "package:mcpb": "node scripts/package-mcpb.mjs"
   },
   "dependencies": {

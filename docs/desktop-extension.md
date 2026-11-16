@@ -9,8 +9,12 @@ on the user's machine. Discobox itself must already be running and accessible.
 
 Choose the bundle matching your machine:
 
-- `discobox-mcp-0.8.0-darwin-arm64.mcpb`: Apple Silicon Mac.
-- `discobox-mcp-0.8.0-darwin-amd64.mcpb`: Intel Mac.
+- `discobox-mcp-0.10.0-darwin-arm64.mcpb`: Apple Silicon Mac.
+- `discobox-mcp-0.10.0-darwin-amd64.mcpb`: Intel Mac.
+- `discobox-mcp-0.10.0-windows-amd64.mcpb`: Windows x64.
+- `discobox-mcp-0.10.0-windows-arm64.mcpb`: Windows ARM64.
+- `discobox-mcp-0.10.0-linux-amd64.mcpb`: Linux x64 (glibc build).
+- `discobox-mcp-0.10.0-linux-arm64.mcpb`: Linux ARM64 (glibc build).
 
 In Claude Desktop, open Settings → Extensions → Advanced settings → Install
 Extension, then select the bundle. Organization policies may restrict local
@@ -18,14 +22,16 @@ extensions. These development bundles are unsigned; they are not directory
 submissions or notarized releases. They have been cross-compiled and validated,
 but native macOS installation still needs testing.
 
-Set the connection URL to **Discobox's API**, for example
-`unix:///absolute/path/to/server.sock` for a host-local installation. Use the
-actual absolute socket path from your Discobox installation. An HTTP(S) API
-origin or `discobox://<server-peer-id>` is also supported. Do not enter
-`http://127.0.0.1:8080/mcp`: that is the separately running adapter, not Discobox.
-Set the project (normally `default`) and an upstream API token only if your
-connection requires one. The token field is sensitive and passed via environment,
-never included in the bundle. Install settings cannot grant backend permissions.
+Leave the optional connection/project overrides blank for guided setup. Once
+installed, ask the assistant to **connect to Discobox**. The setup widget discovers
+the local socket or guides remote peer enrollment, tests the connection, and saves
+a private profile. Restart the adapter to apply changed settings. See
+[connection-setup-widget.md](connection-setup-widget.md).
+
+Advanced overrides pin the connection and make the widget read-only. The endpoint
+is Discobox's API, not `http://127.0.0.1:8080/mcp` (the separate adapter). An API
+token is optional and applies only where the upstream deployment accepts one.
+It is not the bearer token for a separately running MCP adapter.
 
 Peer connections retain the adapter's existing per-user enrollment identity;
 that peer must be enrolled in Discobox. The desktop user must be able to open the socket, but socket access alone
@@ -54,7 +60,7 @@ checkout required by `scripts/build-ui.mjs` for its brand tokens. From the repo:
 
 ```sh
 npm ci
-npm run package:mcpb -- darwin-arm64 darwin-amd64
+npm run package:mcpb -- darwin-arm64 darwin-amd64 windows-amd64 windows-arm64 linux-amd64 linux-arm64
 ```
 
 The script builds and embeds the frontend before cross-compiling, validates and
@@ -66,7 +72,12 @@ module. Developer dependencies are not shipped.
 
 `linux-amd64` and `linux-arm64` are additional build targets for compatible hosts
 and local stdio smoke checks; these do not assert Claude Desktop availability on
-Linux. Windows packaging is not currently provided.
+Linux. Windows bundles contain a native .exe and declare win32 compatibility. Local
+Windows discovery uses Discobox's named pipe; macOS/Linux use a Unix socket.
+A server running inside WSL has a different local endpoint; use an authorized
+Iroh connection rather than assuming the Windows pipe reaches its Unix socket.
+Windows/macOS native installation and Windows ARM64 execution remain unverified.
+Cross-compilation does not establish those runtime behaviors.
 
 Specification: https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md
 CLI: https://github.com/modelcontextprotocol/mcpb/blob/main/CLI.md
@@ -74,7 +85,7 @@ CLI: https://github.com/modelcontextprotocol/mcpb/blob/main/CLI.md
 Verification in the sandbox: both macOS architectures cross-compiled, all bundle
 manifests passed the official packer's validation, archive file allowlists and
 executable permissions passed, and SHA-256 checksums matched. An extracted Linux
-ARM64 archive initialized over stdio, listed all 37 tools, and returned the
+ARM64 archive initialized over stdio, listed the workspace tools, and returned the
 self-contained workspace resource with terminal, files, and desktop panes. This
 smoke check intentionally used an unreachable API origin: browsing startup must
 not contact the backend or create a box. It is not a native macOS install test.

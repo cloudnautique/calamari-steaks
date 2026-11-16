@@ -1,3 +1,4 @@
+import { ServicesView } from "./services-view.js";
 import { FilesView } from "./files-view.js";
 import { DesktopView } from "./desktop-view.js";
 import { ApprovalsView } from "./approvals-view.js";
@@ -35,6 +36,10 @@ function resizeWidget() {
   scheduleFit();
 }
 window.addEventListener('resize',resizeWidget);
+const servicesView=new ServicesView({root:byId('services-pane'),activity:shareWidgetAction,call:async(name,args)=>{
+ if(app){const result=await app.callServerTool({name,arguments:args});if(result.isError)throw Error(result.content?.find(c=>c.type==='text')?.text||'Service action failed');return result._meta?.services||result.structuredContent;}
+ const response=await fetch(`/api/services/${name}`,{method:'POST',headers:{Authorization:`Bearer ${connection.token}`,'Content-Type':'application/json'},body:JSON.stringify(args)});if(!response.ok)throw Error(await response.text());return response.json();
+},open:async url=>{if(app){const result=await app.openLink({url});if(result.isError)throw Error('Could not open service');}else window.open(url,'_blank','noopener,noreferrer');}});
 const filesView = new FilesView({
   call: (name,args) => workspaceCall(name,args),
   activity: shareWidgetAction,
@@ -350,6 +355,7 @@ function detach() {
   setControl(false);
 }
 async function start(value) {
+  if(value?.view==='services'){await openFileWorkspace(value);return;}
   if(value?.view==='approvals') {
     if(byId('workspace').hidden&&byId('manager-browser').hidden)await refreshManagers();
     await approvalsView.open(value.requestId,value.summary?.status||value.status||'pending');return;
@@ -495,7 +501,7 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.8.0' }, {tools:{}}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.10.0' }, {tools:{}}, { autoResize: false });
     app.onlisttools=async()=>({tools:[viewTool]});
     app.oncalltool=async({name,arguments:args})=>{
       try{
@@ -597,7 +603,7 @@ byId('approval-history').onclick=()=>approvalsView.open(undefined,'all').catch(r
 function cleanupWorkspace() {
   if (stopped) return;
   stopped = true; clearTimeout(inboxTimer); clearTimeout(fitTimer); streamReconnect.cancel();
-  socket?.close(); closeApp(); filesView.close(); desktopView.close(); approvalsView.close(); rendererCleanup?.();
+  socket?.close(); closeApp(); servicesView.close(); filesView.close(); desktopView.close(); approvalsView.close(); rendererCleanup?.();
 }
 window.addEventListener('pagehide',cleanupWorkspace,{ once:true });
 byId('detach-terminal').onclick = () => {
@@ -657,6 +663,7 @@ async function selectWorkspaceTab(tab,filePath) {
   activeTab = tab;
   byId('files-pane').hidden = tab !== 'files';
   byId('desktop-pane').hidden = tab !== 'desktop';
+ byId('services-pane').hidden=tab!=='services';if(tab!=='services')servicesView.close();
   byId('viewport').hidden = tab !== 'terminal';
   document.querySelector('.toolbar').hidden = tab !== 'terminal';
   byId('task-details').hidden = tab !== 'terminal';
@@ -664,8 +671,10 @@ async function selectWorkspaceTab(tab,filePath) {
   byId('terminal-tab').setAttribute('aria-selected',String(tab === 'terminal'));
   byId('files-tab').setAttribute('aria-selected',String(tab === 'files'));
   byId('desktop-tab').setAttribute('aria-selected',String(tab === 'desktop'));
+ byId('services-tab').setAttribute('aria-selected',String(tab==='services'));
   filesView.setActive(tab === 'files');
-  if(tab==='desktop') {
+  if(tab==='services'){status.textContent='Services';byId('hint').textContent='Forwarded URLs belong to the adapter machine. Service traffic and private logs stay out of model context.';await servicesView.open(id);}
+ else if(tab==='desktop') {
     byId('hint').textContent='Desktop graphics stay in this widget, outside model context. Leaving this tab disconnects the desktop.';
     status.textContent='Desktop';
     await desktopView.open(id);
@@ -686,8 +695,8 @@ async function selectWorkspaceTab(tab,filePath) {
   if(id===selectedBoxId&&activeTab===tab)shareWidgetAction('view_selected',{boxId:id,view:tab});
 }
 async function openFileWorkspace(value) {
-  const desktop=value.view==='desktop';
-  if (!value.boxId || (!desktop&&!value.file?.path&&!value.directory)) throw new Error('View needs a box ID and file or directory path.');
+  const desktop=value.view==='desktop',services=value.view==='services';
+  if (!value.boxId || (!desktop&&!services&&!value.file?.path&&!value.directory)) throw new Error('View needs a box ID and file or directory path.');
   await yieldInput();
   if (selectedBoxId !== value.boxId) {
     detach();
@@ -701,7 +710,7 @@ async function openFileWorkspace(value) {
   byId('box-title').textContent=selectedName;byId('box-state').textContent=box?describeBox(box):(desktop?'Desktop view':'File view');
   byId('session').textContent=`${value.project} / ${selectedBoxId}`;
   byId('box-task').textContent=box?.task||'Work and files stay in this box.';
-  await selectWorkspaceTab(desktop?'desktop':'files',value.file?.path);
+  await selectWorkspaceTab(services?'services':desktop?'desktop':'files',value.file?.path);
 }
 async function downloadBoxFile(file) {
   if (app) { const result=await app.downloadFile({contents:[{type:'resource_link',uri:file.uri,name:file.name,mimeType:file.mimeType,size:file.size}]}); if(result.isError)throw new Error('Download cancelled or unavailable in this host.');return; }
@@ -743,3 +752,5 @@ function humanUsingWidget(){
   return owned||desktopView.hasControl||byId('paste-dialog').open||
     (document.hasFocus()&&(inputFocused()||element?.matches('input,textarea,select,[contenteditable="true"]')));
 }
+
+byId('services-tab').onclick=()=>selectWorkspaceTab('services').catch(report);

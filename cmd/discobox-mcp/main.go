@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/bridge"
+	"github.com/cloudnautique/discobox-mcp-ui/internal/connection"
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
 	"github.com/cloudnautique/discobox-mcp-ui/web"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -32,9 +34,9 @@ func main() {
 }
 
 func run() error {
-	endpoint := flag.String("discobox", os.Getenv("DISCOBOX_MCP_ENDPOINT"), "Discobox HTTP(S) origin, unix:///absolute/server.sock or discobox://<peer-id>")
+	endpoint := flag.String("discobox", os.Getenv("DISCOBOX_MCP_ENDPOINT"), "Discobox HTTP(S) origin, Unix socket, Windows npipe URL or discobox://<peer-id>")
 	local := flag.Bool("local", false, "Use this sandbox's pool-forwarded Discobox API; requires approved API access")
-	browse := flag.Bool("browse", false, "Start with the manager picker; do not discover or create a manager at startup")
+	browse := flag.Bool("browse", true, "Start with the manager picker; do not discover or create a manager at startup")
 	identity := flag.String("iroh-identity", "", "Persistent adapter enrollment key (default: user config discobox-mcp/iroh/id_ed25519)")
 	peerID := flag.Bool("peer-id", false, "Initialize/load the adapter identity, print its public peer ID and exit")
 	var relays origins
@@ -52,57 +54,100 @@ func run() error {
 	requestLog := flag.Bool("request-log", false, "Log HTTP paths and MCP method timing to stderr, without credentials or request contents")
 	var allowed origins
 	flag.Var(&allowed, "ui-origin", "Exact MCP iframe origin allowed to connect to the terminal; repeat as needed")
+	settingsPath := flag.String("connection-config", "", "Private connection profile path (default: user config discobox-mcp/connection.json)")
+	probe := flag.Bool("connection-probe", false, "Internal: bounded connection test using JSON settings on stdin")
 	flag.Parse()
+	browseExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "browse" {
+			browseExplicit = true
+		}
+	})
+	if !browseExplicit && (*box != "" || *managerState != "" || *harness != "" || *pool != "") {
+		*browse = false
+	}
 	token := os.Getenv("DISCOBOX_MCP_TOKEN")
+	if *probe {
+		return runConnectionProbe(*identity)
+	}
+	var startupError error
+	if *settingsPath == "" {
+		*settingsPath, startupError = connection.DefaultPath()
+	}
+	projectGiven := os.Getenv("DISCOBOX_MCP_PROJECT") != ""
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "project" {
+			projectGiven = true
+		}
+	})
+	if os.Getenv("DISCOBOX_MCP_PROJECT") != "" {
+		flagProject := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "project" {
+				flagProject = true
+			}
+		})
+		if !flagProject {
+			*project = os.Getenv("DISCOBOX_MCP_PROJECT")
+		}
+	}
+	managed := *local || *endpoint != "" || projectGiven
+	cfg := connection.Config{Endpoint: connection.LocalAddress(), Project: "default"}
+	if !*local && !*peerID {
+		saved, e := connection.Load(*settingsPath)
+		if e == nil {
+			cfg = saved
+		} else if !errors.Is(e, os.ErrNotExist) && *endpoint == "" {
+			startupError = e
+		}
+	}
+	if *endpoint != "" {
+		cfg.Endpoint = *endpoint
+	}
+	if projectGiven {
+		cfg.Project = *project
+	}
+	if len(relays) > 0 {
+		cfg.Relays = append([]string(nil), relays...)
+	}
 	var parent string
 	if *local {
 		if *endpoint != "" || *peerID || *identity != "" || len(relays) != 0 {
-			return fmt.Errorf("--local cannot be combined with --discobox, DISCOBOX_MCP_ENDPOINT, --peer-id or Iroh options")
+			return fmt.Errorf("--local cannot be combined with an endpoint, --peer-id or Iroh options")
 		}
-		cfg, err := discobox.LocalConnection()
-		if err != nil {
-			return err
-		}
-		*endpoint, parent, token = cfg.Endpoint, cfg.Parent, ""
-		projectGiven := false
-		flag.Visit(func(f *flag.Flag) {
-			if f.Name == "project" {
-				projectGiven = true
+		localConfig, e := discobox.LocalConnection()
+		if e != nil {
+			startupError = e
+		} else {
+			cfg.Endpoint, parent, token = localConfig.Endpoint, localConfig.Parent, ""
+			if !projectGiven {
+				cfg.Project = localConfig.Project
 			}
-		})
-		if !projectGiven {
-			*project = cfg.Project
 		}
-		log.Printf("Local Discobox API: %s (calling sandbox: %s)", *endpoint, parent)
 	}
-	if *peerID || strings.HasPrefix(*endpoint, "discobox://") {
-		if *identity == "" {
-			var err error
-			*identity, err = discobox.DefaultPeerIdentityPath()
-			if err != nil {
-				return err
-			}
+	if *identity == "" {
+		var e error
+		*identity, e = discobox.DefaultPeerIdentityPath()
+		if e != nil {
+			startupError = e
 		}
 	}
 	if *peerID {
-		_, id, err := discobox.PeerIdentity(*identity)
-		if err != nil {
-			return err
+		_, id, e := discobox.PeerIdentity(*identity)
+		if e != nil {
+			return e
 		}
 		fmt.Println(id.String())
 		return nil
 	}
-	if *endpoint == "" {
-		return fmt.Errorf("--local, --discobox or DISCOBOX_MCP_ENDPOINT is required")
-	}
 	if *box == "" && *exec != "primary" {
-		return fmt.Errorf("--exec requires --box; a created manager uses its primary session")
+		return fmt.Errorf("--exec requires --box")
 	}
 	if *browse && (*box != "" || *exec != "primary") {
-		return fmt.Errorf("--browse cannot be combined with --box or --exec")
+		return fmt.Errorf("--browse cannot be combined with --box or --exec; use --browse=false for an explicit startup session")
 	}
 	if *box != "" && (*managerState != "" || *harness != "" || *pool != "") {
-		return fmt.Errorf("--manager-state, --harness and --pool apply only when --box is omitted")
+		return fmt.Errorf("manager creation options apply only without --box")
 	}
 	if *managerTimeout <= 0 {
 		return fmt.Errorf("--manager-timeout must be positive")
@@ -110,11 +155,10 @@ func run() error {
 	if *transport != "stdio" && *transport != "http" {
 		return fmt.Errorf("--transport must be stdio or http")
 	}
-	host, _, err := net.SplitHostPort(*listen)
-	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+	host, _, e := net.SplitHostPort(*listen)
+	if e != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		return fmt.Errorf("--listen must use a loopback IP; remote authentication is not implemented")
 	}
-	// Reserve the local listener before creating any backend resources.
 	listener, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
@@ -122,43 +166,46 @@ func run() error {
 	defer listener.Close()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if strings.HasPrefix(*endpoint, "discobox://") {
-		id, err := discobox.ConfigurePeer(*endpoint, *identity, relays)
-		if err != nil {
-			return err
+	*endpoint, *project = connection.Resolve(cfg.Endpoint), cfg.Project
+	if e := connection.Validate(cfg); e != nil {
+		startupError = e
+	}
+	if startupError == nil && strings.HasPrefix(*endpoint, "discobox://") {
+		if _, e := discobox.ConfigurePeer(*endpoint, *identity, cfg.Relays); e != nil {
+			startupError = e
 		}
-		log.Printf("Adapter peer: %s (identity: %s)", id.String(), *identity)
-	} else if *identity != "" || len(relays) != 0 {
-		return fmt.Errorf("--iroh-identity and --iroh-relay require a discobox:// peer endpoint")
 	}
 	var client *discobox.Client
-	if *browse {
-		client, err = discobox.NewCatalog(*endpoint, token, *project)
-	} else if *box == "" {
-		if *managerState == "" {
-			*managerState, err = discobox.DefaultManagerState(*endpoint, *project)
-			if err != nil {
-				return err
+	if startupError == nil {
+		if *browse {
+			client, err = discobox.NewCatalog(*endpoint, token, *project)
+		} else if *box == "" {
+			if *managerState == "" {
+				*managerState, err = discobox.DefaultManagerState(*endpoint, *project)
+			}
+			if err == nil {
+				startup, done := context.WithTimeout(ctx, *managerTimeout)
+				client, err = discobox.EnsureManager(startup, *endpoint, token, *project, discobox.ManagerOptions{StatePath: *managerState, Harness: *harness, Pool: *pool, Parent: parent, Progress: func(message string) { log.Print(message) }})
+				done()
+			}
+		} else {
+			client, err = discobox.New(*endpoint, token, discobox.Session{Project: *project, Box: *box, Exec: *exec})
+			if err == nil && parent != "" {
+				err = client.CheckManagerParent(ctx, parent)
+			}
+			if err == nil {
+				err = client.ResolvePrimary(ctx)
 			}
 		}
-		log.Printf("Manager state: %s", *managerState)
-		startup, done := context.WithTimeout(ctx, *managerTimeout)
-		client, err = discobox.EnsureManager(startup, *endpoint, token, *project, discobox.ManagerOptions{
-			StatePath: *managerState, Harness: *harness, Pool: *pool, Parent: parent, Progress: func(message string) { log.Print(message) },
-		})
-		done()
-	} else {
-		client, err = discobox.New(*endpoint, token, discobox.Session{Project: *project, Box: *box, Exec: *exec})
-		if err == nil && parent != "" {
-			err = client.CheckManagerParent(ctx, parent)
-		}
-		if err == nil {
-			err = client.ResolvePrimary(ctx)
+		if err != nil {
+			startupError = err
+			client = nil
 		}
 	}
-	if err != nil {
-		return err
+	if startupError != nil {
+		log.Printf("Connection setup required; MCP remains available (initialization error type %T)", startupError)
 	}
+	onboarding := connection.New(cfg, *settingsPath, *identity, managed, isolatedProbe(*identity, cfg, token), startupError)
 	origin := "http://" + listener.Addr().String()
 	var accessToken string
 	if *accessTokenFile != "" {
@@ -175,6 +222,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	defer s.CloseServiceForwards()
+	s.Onboarding = onboarding
+	log.Printf("Connection setup (private link): %s/setup#token=%s", origin, s.Token())
 	mcpServer := s.MCP()
 	if *requestLog {
 		mcpServer.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -238,10 +288,12 @@ func run() error {
 		defer done()
 		httpServer.Shutdown(shutdown)
 	}()
-	if client.Session.Box != "" {
+	if client != nil && client.Session.Box != "" {
 		log.Printf("Manager: %s / %s / %s", client.Session.Project, client.Session.Box, client.Session.Exec)
+	} else if client != nil {
+		log.Printf("Box picker ready for project %s; no box created at startup", client.Session.Project)
 	} else {
-		log.Printf("Manager picker ready for project %s; no manager created at startup", client.Session.Project)
+		log.Print("Connection setup ready; backend operations are disabled until restart with valid settings")
 	}
 	log.Printf("Local terminal (private link): %s", s.BrowserURL())
 	if err := web.Ready(); err != nil {

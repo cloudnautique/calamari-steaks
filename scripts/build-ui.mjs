@@ -11,6 +11,7 @@ const bundled = await build({
   bundle: true, format: 'esm', platform: 'browser', target: 'es2022',
   minify: true, loader: { '.wasm': 'binary' }, legalComments: 'inline', metafile: true,
 });
+await build({entryPoints:[fileURLToPath(new URL('web/onboarding.js',root))],outfile:fileURLToPath(new URL('onboarding.js',destination)),bundle:true,format:'esm',platform:'browser',target:'es2022',minify:true,legalComments:'inline'});
 for (const [source, name] of [
   ['ghostty-web/dist/ghostty-web.js', 'ghostty-web.js'],
   ['ghostty-web/ghostty-vt.wasm', 'ghostty-vt.wasm'],

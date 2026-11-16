@@ -15,7 +15,7 @@ var files embed.FS
 func Asset(name string) ([]byte, error) { return files.ReadFile("vendor/" + name) }
 
 func Ready() error {
-	for _, name := range []string{"app.js", "tokens.css", "THIRD-PARTY-NOTICES.txt"} {
+	for _, name := range []string{"app.js", "onboarding.js", "tokens.css", "THIRD-PARTY-NOTICES.txt"} {
 		if _, err := Asset(name); err != nil {
 			return fmt.Errorf("missing %s: run npm install and npm run build, then rebuild the Go binary", name)
 		}
@@ -47,4 +47,22 @@ func HTML() (string, error) {
 	// require the host's sandboxed iframe to fetch a localhost HTTP asset.
 	script := strings.ReplaceAll(string(js), "</script", "<\\/script")
 	return strings.NewReplacer("<!--STYLE-->", "<style>"+string(tokens)+string(css)+"</style>", "<!--SCRIPT-->", "<script type=\"module\">"+script+"</script>").Replace(string(html)), nil
+}
+
+// SetupHTML is a small independent app, available even with no backend client.
+func SetupHTML() (string, error) {
+	html, err := files.ReadFile("onboarding.html")
+	if err != nil {
+		return "", err
+	}
+	css, err := files.ReadFile("onboarding.css")
+	if err != nil {
+		return "", err
+	}
+	js, err := Asset("onboarding.js")
+	if err != nil {
+		return "", fmt.Errorf("build connection setup assets: %w", err)
+	}
+	script := strings.ReplaceAll(string(js), "</script", "<\\/script")
+	return strings.NewReplacer("<!--STYLE-->", "<style>"+string(css)+"</style>", "<!--SCRIPT-->", "<script type=\"module\">"+script+"</script>").Replace(string(html)), nil
 }

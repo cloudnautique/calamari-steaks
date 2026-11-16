@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    defaults:
+      run:
+        shell: bash
+    env:
+      DO_NOT_TRACK: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      # scripts/build-ui.mjs reads the brand tokens from this reference tree.
+      # Keep this revision aligned with the Discobox pseudo-version in go.mod.
+      - name: Check out pinned Discobox brand dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: discobox-ai/discobox
+          ref: d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61
+          path: discobox
+          persist-credentials: false
+          sparse-checkout: assets/brand/tokens.css
+          sparse-checkout-cone-mode: false
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Build embedded frontend
+        run: npm run build
+      - name: Check frontend syntax
+        run: npm run check
+      - name: Test frontend
+        run: npm test
+      - name: Test Go with race detector
+        if: runner.os != 'Windows'
+        run: go test -race ./...
+      - name: Test Go on Windows
+        if: runner.os == 'Windows'
+        run: go test ./...
+      - name: Vet Go
+        run: go vet ./...
+
+  bundles:
+    name: Bundle (${{ matrix.platform }})
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            targets: linux-amd64 linux-arm64
+          - os: windows-2025
+            platform: windows
+            targets: windows-amd64 windows-arm64
+          - os: macos-15
+            platform: macos
+            targets: darwin-amd64 darwin-arm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - name: Check out pinned Discobox brand dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: discobox-ai/discobox
+          ref: d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61
+          path: discobox
+          persist-credentials: false
+          sparse-checkout: assets/brand/tokens.css
+          sparse-checkout-cone-mode: false
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Build unsigned MCP bundles
+        env:
+          MCPB_TARGETS: ${{ matrix.targets }}
+        run: |
+          read -r -a targets <<< "$MCPB_TARGETS"
+          npm run package:mcpb -- "${targets[@]}"
+      - name: Upload bundles and checksums
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: mcpb-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            dist/*.mcpb
+            dist/*.mcpb.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

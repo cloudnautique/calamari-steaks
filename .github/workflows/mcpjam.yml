@@ -1,0 +1,88 @@
+name: MCPJam conformance
+
+# Run explicitly while the MCPJam tooling contract is being established.
+# This does not run an LLM, a native desktop client, or a live Discobox backend.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      DO_NOT_TRACK: '1'
+      MCPJAM_TELEMETRY_DISABLED: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Set up Node supported by MCPJam CLI 6.2.2
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - name: Check out pinned Discobox brand dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: discobox-ai/discobox
+          ref: d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61
+          path: discobox
+          persist-credentials: false
+          sparse-checkout: assets/brand/tokens.css
+          sparse-checkout-cone-mode: false
+      - name: Build fixture-only adapter
+        run: |
+          npm ci
+          npm run build
+          mkdir -p "$RUNNER_TEMP/mcpjam/reports"
+          go build -o "$RUNNER_TEMP/mcpjam/discobox-mcp" ./cmd/discobox-mcp
+          cat > "$RUNNER_TEMP/mcpjam/adapter-stdio" <<'SH'
+          #!/bin/sh
+          unset DISCOBOX_MCP_TOKEN DISCOBOX_MCP_ENDPOINT DISCOBOX_MCP_PROJECT
+          exec "$RUNNER_TEMP/mcpjam/discobox-mcp" --browse \
+            --discobox http://127.0.0.1:1 \
+            --connection-config "$RUNNER_TEMP/mcpjam/unused-profile.json" \
+            --iroh-identity "$RUNNER_TEMP/mcpjam/unused-identity.pem"
+          SH
+          chmod 700 "$RUNNER_TEMP/mcpjam/adapter-stdio"
+      - name: Install pinned MCPJam tools outside the repository
+        run: |
+          npm install --prefix "$RUNNER_TEMP/mcpjam/tools" --save-exact --no-audit --no-fund \
+            @mcpjam/cli@6.2.2 @mcpjam/sdk@10.7.0
+      - name: Check initialization and discovery
+        run: |
+          "$RUNNER_TEMP/mcpjam/tools/node_modules/.bin/mcpjam" server doctor \
+            --command "$RUNNER_TEMP/mcpjam/adapter-stdio" --format json \
+            --out "$RUNNER_TEMP/mcpjam/reports/doctor.json"
+      - name: Check MCP Apps contracts
+        run: |
+          "$RUNNER_TEMP/mcpjam/tools/node_modules/.bin/mcpjam" apps conformance \
+            --command "$RUNNER_TEMP/mcpjam/adapter-stdio" --format json \
+            > "$RUNNER_TEMP/mcpjam/reports/apps.json"
+          "$RUNNER_TEMP/mcpjam/tools/node_modules/.bin/mcpjam" apps conformance \
+            --command "$RUNNER_TEMP/mcpjam/adapter-stdio" --reporter junit-xml \
+            > "$RUNNER_TEMP/mcpjam/reports/apps.xml"
+      - name: Upload synthetic conformance reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: mcpjam-conformance-${{ github.sha }}
+          path: ${{ runner.temp }}/mcpjam/reports/*
+          if-no-files-found: warn
+          retention-days: 7
