@@ -1,6 +1,6 @@
 # Files in a box
 
-The first Files view is read-only. It browses directories, renders Markdown or
+The Files view browses directories, uploads local files privately, renders Markdown or
 plain text, opens relative file links within the same box, exposes a canonical
 MCP resource link, and sends file contents to the main chat on request. Raw HTML and
 external images are not rendered. Source view shows the exact text.
@@ -103,3 +103,19 @@ layout with no direct HTTP requests or browser exceptions. It used isolated
 fixtures: the earlier research box had been archived by the time final viewer
 validation ran. Its real stat/list/content API had been verified during triage.
 Native Claude and OpenAI desktop file-view validation is still pending.
+
+## Private uploads
+
+Use **Upload file** in Files to choose a local file for the current folder. Bytes
+travel through app-only `file_upload` calls in 192 KiB chunks and never through
+model context. The host still transports these calls; this does not bypass its
+own transport or privacy policies. Uploads are capped at 16 MiB per file and four
+concurrent sessions. A private temporary file (0600) stages each upload, expires
+after five inactive minutes, and is removed on success, failure, cancellation,
+or normal adapter shutdown. A crash can leave a private OS temporary file.
+
+The adapter rechecks the pinned box's authority at commit and uses Discobox's
+atomic `PUT /files/content?ifExists=fail`. Existing files are refused. It does not
+create missing folders, automatically retry chunks/commits, or send file content
+or upload handles into model-visible results. Switching boxes cancels an unfinished
+upload. To replace an existing file, choose a different name for this version.

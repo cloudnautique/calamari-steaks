@@ -89,3 +89,20 @@ terminal attach, scoped lifecycle calls are submitted once, private log text sta
 out of model-context updates, browser links use host openLink, Close forward
 restores the port action, and UDP entries show an explicit limitation. No direct
 iframe network requests or browser exceptions occurred.
+
+## Opening outside the chat client
+
+**Open via chat app** uses the MCP host's link opener and may use its built-in
+browser. **Open in default browser** is an app-only request to the adapter:
+`open` on macOS, `rundll32 url.dll,FileProtocolHandler` on Windows, and `xdg-open`
+on Linux. It accepts only an existing HTTP(S) forward handle; no arbitrary URL
+or shell command can be supplied. A host with no graphical session should use
+Copy address and open it on the adapter machine. Browser launch is a request,
+not confirmation the page loaded.
+
+The Services view shows the current idle-expiry time and a bounded history of
+closed forwards (the latest 16 per adapter), including idle expiry, failed access
+revalidation, and a changed destination. Adapter restart loses that history and
+all old addresses. A connection-refused error means the address had no accepting
+listener at that time; it is not evidence of a Claude-only forward. Reopen a
+forward explicitly to get the current address. Forwards remain loopback-only.

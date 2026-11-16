@@ -1,3 +1,4 @@
+import {installTerminalLinks,terminalURLs} from './terminal-links.js';
 import { ServicesView } from "./services-view.js";
 import { FilesView } from "./files-view.js";
 import { DesktopView } from "./desktop-view.js";
@@ -27,7 +28,10 @@ let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, foc
 let requestedWidgetHeight;
 function resizeWidget() {
   if(!app)return;
-  const height=widgetHeight(app.getHostContext(),!byId('manager-browser').hidden,window.innerHeight);
+  const context=app.getHostContext();
+  byId('expand-workspace').hidden=!context?.availableDisplayModes?.includes('fullscreen')&&context?.displayMode!=='fullscreen';
+  byId('expand-workspace').textContent=context?.displayMode==='fullscreen'?'Compact':'Expand';
+  const height=widgetHeight(context,!byId('manager-browser').hidden,window.innerHeight);
   document.documentElement.style.setProperty('--app-max-height',`${height}px`);
   if(hostReady && height!==requestedWidgetHeight) {
     requestedWidgetHeight=height;
@@ -340,7 +344,8 @@ async function initializeRenderer() {
   const observer = new ResizeObserver(scheduleFit);
   observer.observe(byId('viewport'));
   const clipboardCleanup=installTerminalClipboard(byId('terminal'),terminal,report);
-  rendererCleanup = () => { clipboardCleanup();observer.disconnect(); terminal.dispose(); };
+  const linksCleanup=installTerminalLinks(byId('terminal'),terminal,openExternal,report);
+  rendererCleanup = () => { clipboardCleanup();linksCleanup();observer.disconnect(); terminal.dispose(); };
 }
 
 function detach() {
@@ -389,8 +394,14 @@ async function start(value) {
 }
 
 async function workspaceCall(name, args = {}) {
+  if(app&&name==='file_upload'){
+    const result=await app.callServerTool({name,arguments:args});
+    if(result.isError)throw Error(result.content?.find(c=>c.type==='text')?.text||'Upload failed');
+    if(!result._meta?.upload)throw Error('The host did not deliver the private upload response.');
+    return result._meta.upload;
+  }
   if (app) return appCall(name, args);
-  const fileAction = {list_box_files:'list',read_box_file:'read',file_read:'read',file_stat:'stat'}[name];
+  const fileAction = {list_box_files:'list',read_box_file:'read',file_read:'read',file_stat:'stat',file_upload:'upload'}[name];
   if (fileAction) {
     const response = await fetch(`/api/files/${fileAction}`,{method:'POST',headers:{Authorization:`Bearer ${connection.token}`,'Content-Type':'application/json'},body:JSON.stringify(args)});
     const result = await response.json(); if(!response.ok) throw new Error(result.error || 'File request failed'); return result;
@@ -501,7 +512,7 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.10.0' }, {tools:{}}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.11.0' }, {tools:{}}, { autoResize: false });
     app.onlisttools=async()=>({tools:[viewTool]});
     app.oncalltool=async({name,arguments:args})=>{
       try{
@@ -749,8 +760,39 @@ byId('paste-cancel').onclick=()=>byId('paste-dialog').close();
 byId('paste-dialog').onclose=()=>{byId('paste-text').value='';pasteTarget=undefined};
 function humanUsingWidget(){
   const element=document.activeElement;
-  return owned||desktopView.hasControl||byId('paste-dialog').open||
+  return owned||desktopView.hasControl||!!document.querySelector('dialog[open]')||
     (document.hasFocus()&&(inputFocused()||element?.matches('input,textarea,select,[contenteditable="true"]')));
 }
 
 byId('services-tab').onclick=()=>selectWorkspaceTab('services').catch(report);
+
+async function openExternal(url){
+ if(app){const result=await app.openLink({url});if(result.isError)throw Error('The host could not open this link. Copy it from Links to open it in your browser.');}
+ else window.open(url,'_blank','noopener,noreferrer');
+}
+async function copyPrivateText(text){
+ if(!text)throw Error('Select some terminal text first. Hold Shift while dragging if the program captures the mouse.');
+ try{await navigator.clipboard.writeText(text);byId('hint').textContent='Copied. Nothing was sent to chat.';}
+ catch{byId('copy-text').value=text;byId('copy-dialog').showModal();byId('copy-text').focus();byId('copy-text').select();}
+}
+byId('copy-terminal').onmousedown=event=>event.preventDefault();
+byId('copy-terminal').onclick=()=>copyPrivateText(terminal?.getSelection()).catch(report);
+byId('copy-close').onclick=()=>byId('copy-dialog').close();
+byId('copy-dialog').onclose=()=>{byId('copy-text').value='';};
+byId('terminal-links').onclick=()=>{
+ const list=byId('terminal-link-list');list.replaceChildren();
+ const urls=terminal?terminalURLs(terminal):[];
+ if(!urls.length)list.textContent='No HTTP(S) links found in recent terminal output.';
+ for(const url of urls){
+  const row=document.createElement('div');row.className='terminal-link-row';
+  const link=document.createElement('a');link.href=url;link.textContent=url;link.onclick=event=>{event.preventDefault();openExternal(url).catch(report);};
+  const copy=document.createElement('button');copy.textContent='Copy';copy.onclick=()=>copyPrivateText(url).catch(report);row.append(link,copy);list.append(row);
+ }
+ byId('links-dialog').showModal();
+};
+byId('links-close').onclick=()=>byId('links-dialog').close();
+
+byId('expand-workspace').onclick=async()=>{
+ try{await app.requestDisplayMode({mode:app.getHostContext()?.displayMode==='fullscreen'?'inline':'fullscreen'});resizeWidget();}catch(error){report(error);}
+};
+document.fonts?.ready.then(()=>{terminal?.renderer?.remeasureFont();scheduleFit();resizeWidget();});

@@ -26,6 +26,16 @@ sent. No automatic input retry is introduced. The host may intercept native
 shortcuts or restrict clipboard access; the explicit Paste fallback is provided
 for that case. Native Claude/Codex keyboard behavior still needs client testing.
 
+The Copy toolbar button copies the terminal selection. Clipboard-write permission
+is requested on the UI resource. If the host refuses it, a selected-text dialog
+supports native Cmd+C/Ctrl+C without sending anything to chat. Hold Shift while
+dragging if the terminal program captures mouse input.
+
+HTTP(S) terminal links open through the MCP host's `openLink` bridge. The Links
+button also lists recent links with Open/Copy actions, joining wrapped lines
+so login codes and query strings survive copying. These URLs stay local to the
+widget. This link handler accepts only HTTP(S) URLs without embedded username/password credentials.
+
 ## Model-selected views
 
 A widget advertises an app tool:
@@ -84,3 +94,9 @@ terminal resize from 56 rows at 1120px to 25 rows at 650px, a 1060px expanded
 picture-in-picture catalog, and a return to the compact 520px inline catalog.
 Native Codex canvas behavior still needs confirmation. Resource v12 retains all
 older resource URI aliases so restored views remain readable.
+
+The workspace now uses its requested height directly rather than capping it at
+the iframe's initial viewport height. An initially short iframe can request its
+compact 520px height. Expand/Compact is available when the host advertises
+fullscreen support. Font readiness and viewport changes trigger terminal fitting.
+The current resource is v14; all older resource aliases remain readable.

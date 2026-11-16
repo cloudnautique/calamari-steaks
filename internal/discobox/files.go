@@ -271,3 +271,47 @@ func (c *Client) ReadFile(ctx context.Context, id, parent, target string, offset
 	}
 	return result, nil
 }
+
+// WriteFile uploads one complete file atomically through Discobox's files API.
+// Existing paths are refused; a private upload never overwrites workspace data.
+func (c *Client) WriteFile(ctx context.Context, id, parent, target string, body io.Reader, size int64) (FileInfo, error) {
+	clean, err := cleanFilePath(target)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	if size < 0 || size > 16<<20 {
+		return FileInfo{}, errors.New("upload must be at most 16 MiB")
+	}
+	root, err := c.fileRoot(ctx, id, parent)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	query := url.Values{"path": {clean}, "ifExists": {"fail"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+root+"/content?"+query.Encode(), io.LimitReader(body, size))
+	if err != nil {
+		return FileInfo{}, err
+	}
+	req.ContentLength = size
+	req.Header = c.headers()
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return FileInfo{}, errors.New("upload delivery was not confirmed; inspect the folder before trying again")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return FileInfo{}, &HTTPError{Status: resp.StatusCode, Path: root + "/content"}
+	}
+	var info FileInfo
+	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&info); err != nil {
+		return info, errors.New("upload response was not confirmed; inspect the folder before trying again")
+	}
+	if err = c.decorateFile(&info); err != nil {
+		return info, err
+	}
+	if info.Path != clean || info.Type != "file" || info.Size != size {
+		return info, errors.New("upload returned unexpected file metadata; inspect the folder")
+	}
+	info.URI, err = FileURI(c.Session.Project, id, clean)
+	return info, err
+}

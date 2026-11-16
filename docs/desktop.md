@@ -53,10 +53,15 @@ channel and is never automatically replayed. At most four desktop opens/views
 are allowed at once. An abandoned view expires after 90 seconds.
 
 Opening starts as a viewer. Focus in the desktop claims the same input ownership
-used by terminal and assistant writes; leaving focus yields it. The first click
-may only acquire focus, rather than replaying a click after an async claim. A
-second view cannot take an existing controller's lease. The display scales to
-its available canvas without changing the remote desktop resolution. Leaving
+used by terminal and assistant writes; leaving focus yields it. An initial mouse gesture is held in a bounded queue during the asynchronous
+focus claim, then delivered in order after ownership is confirmed. Blur, tab
+changes, failed claims, or disconnects discard it; uncertain network input is
+never retried. A second view cannot take an existing controller's lease.
+
+The Display selector defaults to Fit display and also offers Adapt resolution and Actual size.
+Adapt requests the canvas resolution through noVNC only while this view owns
+input, where the VNC server supports remote resizing; local scaling remains the
+fallback. Fit only scales locally, and Actual size allows scrolling. Leaving
 the Desktop tab, changing box, closing the widget, or archiving the box closes
 the desktop connection. An existing terminal stream can remain connected.
 

@@ -1,3 +1,4 @@
+import {uploadFile} from './file-upload.js';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {FilesModel,parentDirectory,resolveFileLink} from './files-model.js';
@@ -7,6 +8,20 @@ export class FilesView {
   constructor({call,activity,external,share,download}) {
     this.activity=activity;this.external=external;this.share=share;this.download=download;this.active=false;this.raw=false;this.signature='';
     this.model=new FilesModel(call,state=>this.render(state));
+    $('files-upload').onclick=()=>$('files-upload-input').click();
+    $('files-upload-input').onchange=async()=>{
+      const input=$('files-upload-input'),file=input.files?.[0];input.value='';if(!file||this.uploading)return;
+      const {boxId,directory}=this.model.state,epoch=this.model.epoch;
+      this.uploading=true;$('files-upload').disabled=true;
+      const current=()=>this.model.state.boxId===boxId&&this.model.epoch===epoch;
+      const progress=(n,total)=>{if(current())$('files-upload-status').textContent=`Uploading ${file.name} · ${total?Math.round(n/total*100):100}%`;};
+      progress(0,file.size);
+      try{
+        const info=await uploadFile(call,file,{boxId,directory,current,progress});
+        if(current()){$('files-upload-status').textContent=`Uploaded ${info.name} to ${info.path}. File bytes stayed out of chat.`;await this.model.list(directory);}
+      }catch(error){if(current())$('files-upload-status').textContent=error.message+' Nothing was automatically retried. Existing files are never overwritten.';}
+      finally{this.uploading=false;$('files-upload').disabled=false;}
+    };
     $('files-go').onclick=() => this.model.list($('files-path').value);
     $('files-path').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();this.model.list($('files-path').value)}};
     $('files-up').onclick=()=>this.model.list(parentDirectory(this.model.state.directory));

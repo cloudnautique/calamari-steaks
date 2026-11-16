@@ -21,14 +21,15 @@ const forwardLimit = 8
 
 // No application bytes pass through a tool result or model context.
 type forwardInfo struct {
-	OpenedAt time.Time `json:"openedAt"`
-	ID       string    `json:"id"`
-	BoxID    string    `json:"boxId"`
-	Port     int       `json:"port"`
-	Address  string    `json:"address"`
-	URL      string    `json:"url,omitempty"`
-	State    string    `json:"state"`
-	Message  string    `json:"message"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	OpenedAt  time.Time `json:"openedAt"`
+	ID        string    `json:"id"`
+	BoxID     string    `json:"boxId"`
+	Port      int       `json:"port"`
+	Address   string    `json:"address"`
+	URL       string    `json:"url,omitempty"`
+	State     string    `json:"state"`
+	Message   string    `json:"message"`
 }
 type serviceForward struct {
 	target   discobox.ServicePort
@@ -76,15 +77,42 @@ func (s *Server) forwards(box string) []forwardInfo {
 	out := []forwardInfo{}
 	for _, f := range s.serviceForwards {
 		if box == "" || f.info.BoxID == box {
-			out = append(out, f.info)
+			info := f.info
+			f.mu.Lock()
+			info.ExpiresAt = f.last.Add(forwardIdle)
+			f.mu.Unlock()
+			out = append(out, info)
+		}
+	}
+	return out
+}
+func (s *Server) closedForwards(box string) []forwardInfo {
+	s.serviceMu.Lock()
+	defer s.serviceMu.Unlock()
+	out := []forwardInfo{}
+	for _, info := range s.serviceClosed {
+		if box == "" || info.BoxID == box {
+			out = append(out, info)
 		}
 	}
 	return out
 }
 func (s *Server) closeForward(id string) error {
+	return s.closeForwardReason(id, "Closed explicitly or during adapter shutdown")
+}
+func (s *Server) closeForwardReason(id, reason string) error {
 	s.serviceMu.Lock()
 	f := s.serviceForwards[id]
 	delete(s.serviceForwards, id)
+	if f != nil {
+		info := f.info
+		info.State = "closed"
+		info.Message = reason
+		s.serviceClosed = append(s.serviceClosed, info)
+		if len(s.serviceClosed) > 16 {
+			s.serviceClosed = s.serviceClosed[len(s.serviceClosed)-16:]
+		}
+	}
 	s.serviceMu.Unlock()
 	if f == nil {
 		return errors.New("forward is already closed or expired")
@@ -189,14 +217,14 @@ func (s *Server) watchForward(f *serviceForward) {
 			expired := time.Since(f.last) > forwardIdle
 			f.mu.Unlock()
 			if expired {
-				s.closeForward(f.info.ID)
+				s.closeForwardReason(f.info.ID, "Expired after 15 minutes without traffic or widget renewal")
 				return
 			}
 			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 			e := s.Client.BoxAccess(ctx, f.info.BoxID, s.managerOptions.Parent)
 			cancel()
 			if e != nil {
-				s.closeForward(f.info.ID)
+				s.closeForwardReason(f.info.ID, "Closed because box access could not be revalidated; refresh and reopen explicitly")
 				return
 			}
 		}
@@ -229,7 +257,7 @@ func (s *Server) spliceForward(f *serviceForward, local net.Conn) {
 	}
 	defer remote.Close()
 	if target.Host != f.target.Host || target.Protocol != f.target.Protocol || target.ServiceID != f.target.ServiceID {
-		s.closeForward(f.info.ID)
+		s.closeForwardReason(f.info.ID, "Closed because the reported destination changed")
 		return
 	}
 	touch := func() {
@@ -279,12 +307,13 @@ func (s *Server) servicesData(ctx context.Context, box string) (map[string]any, 
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"view": "services", "boxId": box, "project": s.Client.Session.Project, "catalog": catalog, "forwards": s.forwards(box), "forwardingAvailable": s.managerOptions.Parent == ""}, nil
+	return map[string]any{"view": "services", "boxId": box, "project": s.Client.Session.Project, "catalog": catalog, "forwards": s.forwards(box), "closedForwards": s.closedForwards(box), "forwardingAvailable": s.managerOptions.Parent == ""}, nil
 }
 func servicePrivate(data any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Service app response; details are delivered privately to the widget."}}, Meta: mcp.Meta{"services": data}}
 }
 func (s *Server) serviceTools(server *mcp.Server) {
+	s.serviceBrowserTool(server)
 	ui := mcp.Meta{"ui": map[string]any{"resourceUri": uiResource}}
 	private := mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}
 	mcp.AddTool(server, &mcp.Tool{Name: "list_services", Description: "SHOW UI: list declared services and reported ports in an authorized box. Service catalog access may wake it. Does not start a service or open a forward. Opens the Services workspace.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, in desktopTarget) (*mcp.CallToolResult, map[string]any, error) {
@@ -316,7 +345,7 @@ func (s *Server) serviceTools(server *mcp.Server) {
 		return nil, map[string]any{"forwardId": in.ForwardID, "closed": e == nil}, e
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "list_service_forwards", Description: "List this adapter's active local forwards, optionally for a boxId. Read-only; does not renew leases or return application content.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, in forwardListInput) (*mcp.CallToolResult, map[string]any, error) {
-		return nil, map[string]any{"forwards": s.forwards(in.BoxID)}, nil
+		return nil, map[string]any{"forwards": s.forwards(in.BoxID), "closedForwards": s.closedForwards(in.BoxID)}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "read_service_logs", Description: "TEXT ONLY: explicitly read up to 64 KiB of recent untrusted service logs. Logs may contain sensitive application output; use the Services widget for private viewing.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, in serviceTargetInput) (*mcp.CallToolResult, map[string]any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -367,7 +396,9 @@ func (s *Server) serviceHTTP(mux *http.ServeMux) {
 			e = s.closeForward(in.ForwardID)
 			data = map[string]any{"closed": e == nil}
 		case "list_service_forwards":
-			data = map[string]any{"forwards": s.forwards(in.BoxID)}
+			data = map[string]any{"forwards": s.forwards(in.BoxID), "closedForwards": s.closedForwards(in.BoxID)}
+		case "service_open_browser":
+			data, e = s.openServiceBrowser(in.ForwardID)
 		case "service_logs":
 			data, e = s.Client.ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
 		case "service_keepalive":

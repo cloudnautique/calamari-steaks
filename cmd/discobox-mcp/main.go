@@ -223,6 +223,7 @@ func run() error {
 		return err
 	}
 	defer s.CloseServiceForwards()
+	defer s.CloseFileUploads()
 	s.Onboarding = onboarding
 	log.Printf("Connection setup (private link): %s/setup#token=%s", origin, s.Token())
 	mcpServer := s.MCP()

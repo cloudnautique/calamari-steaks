@@ -19,9 +19,12 @@ import (
 // Server owns a catalog on one configured endpoint/project. Connected manager
 // sessions are pinned independently; callers cannot supply upstream URLs.
 type Server struct {
+	uploadMu         sync.Mutex
+	uploads          map[string]*fileUpload
 	serviceOpenSlots chan struct{}
 	serviceMu        sync.Mutex
 	serviceForwards  map[string]*serviceForward
+	serviceClosed    []forwardInfo
 	Client           *discobox.Client
 	Onboarding       *connection.Controller
 	Origin           string

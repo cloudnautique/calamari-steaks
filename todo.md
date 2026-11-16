@@ -263,3 +263,12 @@ clipboard/client app-tool exposure remain to verify; see docs/terminal-input.md.
 - [x] GitHub native-platform test and unsigned bundle workflows; manual fixture-only MCPJam conformance. Workflows pass actionlint; GitHub execution awaits publishing the files.
 - [ ] Native Windows/macOS installation, Windows ARM64 execution, and authorized host forwarding acceptance tests.
 - [ ] Hosted authenticated HTTPS service previews, embedded pages, and UDP forwarding.
+
+## Installed bundle UX follow-up
+
+- [x] Terminal Copy fallback, host link opening and wrapped-login Links panel.
+- [x] Private, bounded file uploads through the Files API; no model file bytes.
+- [x] Default-browser opening, copy address, forward expiry and closure diagnostics.
+- [x] Preserve initial desktop mouse gestures during focus claim; adaptive display modes.
+- [x] Initial iframe height negotiation and explicit Expand/Compact controls.
+- [ ] Validate these interactions in installed Claude/Codex bundles, including Brave access and desktop double-click/resolution changes.
