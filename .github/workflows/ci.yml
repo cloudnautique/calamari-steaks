@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
+        os: [ubuntu-24.04, windows-2025, macos-26]
     defaults:
       run:
         shell: bash
@@ -86,9 +86,9 @@ jobs:
           - os: windows-2025
             platform: windows
             targets: windows-amd64 windows-arm64
-          - os: macos-15
+          - os: macos-26
             platform: macos
-            targets: darwin-amd64 darwin-arm64
+            targets: darwin-universal
     defaults:
       run:
         shell: bash
@@ -124,6 +124,17 @@ jobs:
         run: |
           read -r -a targets <<< "$MCPB_TARGETS"
           npm run package:mcpb -- "${targets[@]}"
+      - name: Smoke test packaged macOS binary on Apple Silicon
+        if: runner.os == 'macOS'
+        run: |
+          test "$(uname -m)" = arm64
+          extract_dir="$RUNNER_TEMP/mcpb-macos-smoke"
+          mkdir -p "$extract_dir"
+          unzip -q dist/*-darwin-universal.mcpb -d "$extract_dir"
+          binary="$extract_dir/server/discobox-mcp"
+          xcrun lipo "$binary" -verify_arch arm64 x86_64
+          codesign --verify --strict "$binary"
+          arch -arm64 "$binary" --help
       - name: Upload bundles and checksums
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:

@@ -2,16 +2,20 @@
 
 `CI` runs on pull requests, pushes to `main`, and manual dispatch. It builds the
 embedded frontend, checks JavaScript, runs Node tests, and tests/vets Go on native
-Ubuntu 24.04 x64, Windows 2025 x64, and macOS 15 ARM64 runners. Unix runners use
+Ubuntu 24.04 x64, Windows 2025 x64, and macOS 26 ARM64 runners. Unix runners use
 the race detector; Windows currently runs ordinary Go tests rather than assuming
 a particular C compiler is installed for race builds.
 
 After all test jobs pass, pushes and manual runs build unsigned MCPB candidates
-for macOS, Windows, and Linux, each with AMD64 and ARM64 variants. Packaging runs
-on the corresponding native OS, though one architecture per platform is a cross
-build. The workflow uploads only `.mcpb` files and SHA-256 sidecars, retained for
-14 days. It does not sign, notarize, publish releases, or push changes. Download
-bundles from the successful run's Artifacts section. Native installation and
+for macOS, Windows, and Linux. macOS uses an Apple Silicon `macos-26` runner
+and produces one `darwin-universal` bundle: Go builds ARM64 and AMD64 slices,
+`lipo` merges them, and `codesign` applies and verifies an ad-hoc signature.
+CI verifies both slices and smoke-tests the packaged executable natively on ARM64.
+Intel execution is not tested. Windows and Linux retain separate AMD64 and ARM64
+bundles, with one architecture per platform cross-compiled. The workflow uploads
+only `.mcpb` files and SHA-256 sidecars, retained for 14 days. It does not apply
+Developer ID signing, notarize, publish releases, or push changes. Download bundles
+from the successful run's Artifacts section. Native installation and
 real Iroh connections still require separate acceptance testing.
 
 The build-time brand dependency is checked out sparsely at Discobox commit

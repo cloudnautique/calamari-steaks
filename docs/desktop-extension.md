@@ -9,8 +9,7 @@ on the user's machine. Discobox itself must already be running and accessible.
 
 Choose the bundle matching your machine:
 
-- `discobox-mcp-0.10.0-darwin-arm64.mcpb`: Apple Silicon Mac.
-- `discobox-mcp-0.10.0-darwin-amd64.mcpb`: Intel Mac.
+- `discobox-mcp-0.10.0-darwin-universal.mcpb`: Mac (native Apple Silicon and Intel).
 - `discobox-mcp-0.10.0-windows-amd64.mcpb`: Windows x64.
 - `discobox-mcp-0.10.0-windows-arm64.mcpb`: Windows ARM64.
 - `discobox-mcp-0.10.0-linux-amd64.mcpb`: Linux x64 (glibc build).
@@ -18,8 +17,9 @@ Choose the bundle matching your machine:
 
 In Claude Desktop, open Settings → Extensions → Advanced settings → Install
 Extension, then select the bundle. Organization policies may restrict local
-extensions. These development bundles are unsigned; they are not directory
-submissions or notarized releases. They have been cross-compiled and validated,
+extensions. These development bundles have no Developer ID signature (the
+universal Mac executable is ad-hoc signed); they are not directory submissions
+or notarized releases. They have been cross-compiled and validated,
 but native macOS installation still needs testing.
 
 Leave the optional connection/project overrides blank for guided setup. Once
@@ -60,10 +60,19 @@ checkout required by `scripts/build-ui.mjs` for its brand tokens. From the repo:
 
 ```sh
 npm ci
-npm run package:mcpb -- darwin-arm64 darwin-amd64 windows-amd64 windows-arm64 linux-amd64 linux-arm64
+# On macOS with Xcode command-line tools:
+npm run package:mcpb -- darwin-universal
+# Windows/Linux bundles can also be cross-compiled:
+npm run package:mcpb -- windows-amd64 windows-arm64 linux-amd64 linux-arm64
 ```
 
-The script builds and embeds the frontend before cross-compiling, validates and
+The default target on macOS is `darwin-universal`. It builds both Go architectures,
+merges them with `xcrun lipo`, verifies both slices, and ad-hoc signs and verifies
+the executable with `codesign`. Universal packaging requires macOS; individual
+`darwin-arm64` and `darwin-amd64` targets remain available for cross-compilation.
+CI builds and tests on macOS 26 Apple Silicon; Intel execution is not tested.
+
+The script builds and embeds the frontend before compiling, validates and
 packs with pinned `@anthropic-ai/mcpb`, and writes bundles plus SHA-256 checksums
 under `dist/`. It stages only the binary, manifest, installation guide, and frontend
 third-party notices. It never packs the repository root, logs, screenshots,
