@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,7 +16,14 @@ import (
 
 func TestUnixTransportIgnoresProxyAndCarriesUpgrade(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
-	path := filepath.Join(t.TempDir(), "server.sock")
+	// t.TempDir includes the test name, which can overflow Darwin's 104-byte
+	// Unix socket path limit under its long default temporary directory.
+	directory, err := os.MkdirTemp("", "dbx-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(directory) })
+	path := filepath.Join(directory, "server.sock")
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
