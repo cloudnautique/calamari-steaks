@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -85,7 +86,7 @@ func TestPrivateUploadOrderingPermissionsAndCleanup(t *testing.T) {
 	id := begin()
 	tmp := s.uploads[id].file.Name()
 	stat, e := os.Stat(tmp)
-	if e != nil || stat.Mode().Perm()&0077 != 0 {
+	if e != nil || (runtime.GOOS != "windows" && stat.Mode().Perm()&0077 != 0) {
 		t.Fatal("upload is not private", e)
 	}
 	if _, failed := tool(uploadInput{Action: "finish", UploadID: id}); !failed {

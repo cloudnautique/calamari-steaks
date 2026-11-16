@@ -110,9 +110,9 @@ Use **Upload file** in Files to choose a local file for the current folder. Byte
 travel through app-only `file_upload` calls in 192 KiB chunks and never through
 model context. The host still transports these calls; this does not bypass its
 own transport or privacy policies. Uploads are capped at 16 MiB per file and four
-concurrent sessions. A private temporary file (0600) stages each upload, expires
-after five inactive minutes, and is removed on success, failure, cancellation,
-or normal adapter shutdown. A crash can leave a private OS temporary file.
+concurrent sessions. A temporary file stages each upload (0600 on Unix; Windows inherits the
+temporary directory's ACLs), expires after five inactive minutes, and is removed
+on success, failure, cancellation, or normal adapter shutdown. A crash can leave a private OS temporary file.
 
 The adapter rechecks the pinned box's authority at commit and uses Discobox's
 atomic `PUT /files/content?ifExists=fail`. Existing files are refused. It does not
