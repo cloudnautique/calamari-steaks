@@ -110,6 +110,19 @@ func testServer(t *testing.T, b *fakeBackend) (*Server, *httptest.Server) {
 	return s, httpServer
 }
 
+// toolData returns a tool's app payload: private transport metadata when the
+// tool keeps it out of model context, otherwise its structured content.
+func toolData(result *mcp.CallToolResult) map[string]any {
+	source := any(result.StructuredContent)
+	if private, ok := result.Meta["terminal"]; ok {
+		source = private
+	}
+	encoded, _ := json.Marshal(source)
+	var value map[string]any
+	json.Unmarshal(encoded, &value)
+	return value
+}
+
 func mcpClient(t *testing.T, ctx context.Context, s *Server) *mcp.ClientSession {
 	t.Helper()
 	st, ct := mcp.NewInMemoryTransports()

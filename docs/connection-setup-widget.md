@@ -81,6 +81,9 @@ can wait for the backend; the MCPB and ordinary default startup use browse mode.
   ID plus the operator command. It performs no enrollment or network call.
 - `connection_test` and `connection_save` are app-only. Their details are in
   `_meta.onboarding`, with a constant model-visible acknowledgement.
+- `connection_save` also requires a single-use save token. Setup results deliver
+  it only in `_meta.setup.saveToken` (never content or structured content), so
+  the model cannot save a profile even on a host that exposed the tool.
 
 Text-only clients can read the instructions/public ID, test the active target,
 and set launcher settings or edit the documented profile, then restart. The widget

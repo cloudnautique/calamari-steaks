@@ -48,6 +48,7 @@ type desktopSession struct {
 	writeMu       sync.Mutex
 	sequence      uint64
 	lastDigest    [32]byte
+	rfb           rfbFilter
 }
 
 func desktopResult(data map[string]any) *mcp.CallToolResult {
@@ -135,9 +136,12 @@ func (s *Server) desktopTools(server *mcp.Server) {
 			if decodeErr != nil || len(data) == 0 || len(data) > desktopInput {
 				return nil, nil, errors.New("invalid desktop byte batch")
 			}
-			err = view.write(input.Sequence, data)
+			var dropped int
+			dropped, err = view.write(input.Sequence, data)
 			if err != nil {
 				s.closeDesktop(view.id)
+			} else if dropped > 0 {
+				return desktopResult(map[string]any{"ok": true, "droppedInput": dropped}), nil, nil
 			}
 		default:
 			err = errors.New("invalid desktop action")
@@ -186,32 +190,66 @@ func (s *Server) closeDesktop(id string) {
 	view.mu.Unlock()
 	view.manager.release(id)
 }
-func (v *desktopSession) write(sequence uint64, data []byte) error {
+
+// write forwards one acknowledged batch. Input messages (keyboard, pointer,
+// clipboard, desktop size) are delivered only while this view holds the box's
+// input claim; ownership is checked under the same lock that transfers it, so a
+// claim cannot change between the check and the write. Viewer protocol
+// messages always pass so a watching view keeps receiving updates. It returns
+// the number of input messages dropped because this view lacked the claim.
+func (v *desktopSession) write(sequence uint64, data []byte) (int, error) {
 	v.writeMu.Lock()
 	defer v.writeMu.Unlock()
 	digest := sha256.Sum256(data)
 	if sequence == v.sequence && sequence != 0 && digest == v.lastDigest {
-		return nil
+		return 0, nil
 	}
 	if sequence != v.sequence+1 {
-		return errors.New("desktop write sequence mismatch; reopen without replaying input")
+		return 0, errors.New("desktop write sequence mismatch; reopen without replaying input")
 	}
-	if err := v.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return err
+	segments, err := v.rfb.feed(data)
+	if err != nil {
+		return 0, err
 	}
-	for len(data) > 0 {
-		n, err := v.conn.Write(data)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return errors.New("desktop write stalled")
-		}
-		data = data[n:]
+	dropped, err := v.forward(segments)
+	if err != nil {
+		return 0, err
 	}
 	v.sequence = sequence
 	v.lastDigest = digest
-	return nil
+	return dropped, nil
+}
+func (v *desktopSession) forward(segments []rfbSegment) (int, error) {
+	m := v.manager
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owner := !m.archived && m.controller == v.id
+	var out []byte
+	dropped := 0
+	for _, segment := range segments {
+		if segment.input && !owner {
+			dropped++
+			continue
+		}
+		out = append(out, segment.data...)
+	}
+	if len(out) == 0 {
+		return dropped, nil
+	}
+	if err := v.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return 0, err
+	}
+	for len(out) > 0 {
+		n, err := v.conn.Write(out)
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			return 0, errors.New("desktop write stalled")
+		}
+		out = out[n:]
+	}
+	return dropped, nil
 }
 func (v *desktopSession) read(ctx context.Context, after uint64) (map[string]any, error) {
 	hold := time.NewTimer(12 * time.Second)

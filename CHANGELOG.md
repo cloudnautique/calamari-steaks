@@ -27,8 +27,8 @@ Follows the design review in `DESIGN-REVIEW.md` (findings F1–F15).
 ### Sessions and views
 - Reopening a box adopts a replaced primary session (never under a person's
   input); stale sessions return an actionable error.
-- One live terminal view per box; at capacity the least recently used idle view
-  is paused instead of refusing the new one.
+- At the 8-view cap, an older view of the same box (else the least recently
+  used idle view) is paused instead of refusing the new one.
 - Widgets attach and poll only while visible, read one shared catalog cache
   (invalidated by the project event stream), and push model context only
   after the person interacts.

@@ -73,9 +73,17 @@ type terminalAction struct {
 	Rows       int    `json:"rows,omitempty"`
 }
 
+// terminalResult keeps the view handle and terminal bytes in _meta, which the
+// host delivers to the app but not to model context. A terminalId is an input
+// capability for a human view, so it MUST NOT appear in content or
+// structuredContent (go-sdk would also mirror structuredContent into text).
+func terminalResult(data map[string]any) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Meta: mcp.Meta{"terminal": data}, Content: []mcp.Content{&mcp.TextContent{Text: "Terminal transport response for the app only."}}}
+}
+
 func (s *Server) appTools(server *mcp.Server) {
 	appOnly := mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_open", Description: "Attach an MCP App view to the pinned terminal. Does not create a box. A newer view of the same box takes over its stream.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalOpenInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_open", Description: "Attach an MCP App view to the pinned terminal. Does not create a box. A newer view of the same box takes over its stream.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalOpenInput) (*mcp.CallToolResult, any, error) {
 		var manager *managerConnection
 		var info map[string]any
 		var err error
@@ -145,9 +153,9 @@ func (s *Server) appTools(server *mcp.Server) {
 		for key, value := range info {
 			result[key] = value
 		}
-		return nil, result, nil
+		return terminalResult(result), nil, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_read", Description: "Read terminal bytes through the MCP App bridge from a cursor. May wait up to 12 seconds; safe to repeat a read.", Meta: appOnly, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalRead) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_read", Description: "Read terminal bytes through the MCP App bridge from a cursor. May wait up to 12 seconds; safe to repeat a read.", Meta: appOnly, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalRead) (*mcp.CallToolResult, any, error) {
 		view, err := s.appTerminal(input.TerminalID)
 		if err != nil {
 			return nil, nil, err
@@ -179,18 +187,18 @@ func (s *Server) appTools(server *mcp.Server) {
 				view.mu.Lock()
 				evicted := view.evicted
 				view.mu.Unlock()
-				return nil, map[string]any{"chunks": chunks, "cursor": cursor, "closed": done && cursor == latest, "ended": ended, "evicted": evicted}, nil
+				return terminalResult(map[string]any{"chunks": chunks, "cursor": cursor, "closed": done && cursor == latest, "ended": ended, "evicted": evicted}), nil, nil
 			}
 			select {
 			case <-ctx.Done():
 				return nil, nil, ctx.Err()
 			case <-hold.C:
-				return nil, map[string]any{"chunks": chunks, "cursor": cursor, "closed": false}, nil
+				return terminalResult(map[string]any{"chunks": chunks, "cursor": cursor, "closed": false}), nil, nil
 			case <-wake:
 			}
 		}
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_action", Description: "MCP App terminal ownership, input, resize and detach. Never retry input whose outcome is uncertain.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalAction) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_action", Description: "MCP App terminal ownership, input, resize and detach. Never retry input whose outcome is uncertain.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalAction) (*mcp.CallToolResult, any, error) {
 		view, err := s.appTerminal(input.TerminalID)
 		if err != nil {
 			return nil, nil, err
@@ -223,11 +231,17 @@ func (s *Server) appTools(server *mcp.Server) {
 				}
 				return view.stream.Write(discobox.Repaint, nil)
 			})
-			return nil, map[string]any{"ok": resizeErr == nil, "resized": resized}, resizeErr
+			if resizeErr != nil {
+				return nil, nil, resizeErr
+			}
+			return terminalResult(map[string]any{"ok": true, "resized": resized}), nil, nil
 		default:
 			err = fmt.Errorf("unknown terminal action")
 		}
-		return nil, map[string]any{"ok": err == nil}, err
+		if err != nil {
+			return nil, nil, err
+		}
+		return terminalResult(map[string]any{"ok": true}), nil, nil
 	})
 }
 
@@ -248,9 +262,11 @@ func (s *Server) appTerminal(id string) (*appTerminal, error) {
 	return view, nil
 }
 
-// makeRoomFor picks views to close for a new view: older views of the same
-// box (one live view per box), then the least recently used views while the
-// adapter is at capacity. A view a person is typing in is never chosen.
+// makeRoomFor picks views to close when the adapter is at capacity: older
+// views of the same box first (the newer view supersedes them), then the
+// least recently used. A view a person is typing in is never chosen. Below
+// capacity, several views of one box may coexist (an observer beside the
+// view that holds input).
 func (s *Server) makeRoomFor(next *appTerminal) map[string]string {
 	// Snapshot first: archive holds a box's focus lock while taking appMu, so
 	// focus must never be checked while appMu is held.
@@ -263,24 +279,29 @@ func (s *Server) makeRoomFor(next *appTerminal) map[string]string {
 	evict := map[string]string{}
 	candidates := []*appTerminal{}
 	for _, view := range views {
-		key := view.id
 		if view.holdsControl() {
-			continue
-		}
-		if view.box == next.box {
-			evict[key] = evictedSuperseded
 			continue
 		}
 		candidates = append(candidates, view)
 	}
 	s.appMu.Lock()
 	defer s.appMu.Unlock()
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].lastActive.Before(candidates[j].lastActive) })
+	sort.SliceStable(candidates, func(i, j int) bool {
+		a, b := candidates[i].box == next.box, candidates[j].box == next.box
+		if a != b {
+			return a
+		}
+		return candidates[i].lastActive.Before(candidates[j].lastActive)
+	})
 	for _, view := range candidates {
 		if len(s.appTerminals)-len(evict) < maxAppTerminals {
 			break
 		}
-		evict[view.id] = evictedCapacity
+		if view.box == next.box {
+			evict[view.id] = evictedSuperseded
+		} else {
+			evict[view.id] = evictedCapacity
+		}
 	}
 	return evict
 }

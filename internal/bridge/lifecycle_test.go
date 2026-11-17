@@ -99,7 +99,11 @@ func newLifecycleFixture(t *testing.T) (*Server, *mcp.ClientSession, *lifecycleB
 
 func structured(t *testing.T, result *mcp.CallToolResult) map[string]any {
 	t.Helper()
-	raw, _ := json.Marshal(result.StructuredContent)
+	value := result.StructuredContent
+	if private, ok := result.Meta["terminal"]; ok {
+		value = private // terminal transport results are app-private
+	}
+	raw, _ := json.Marshal(value)
 	var data map[string]any
 	json.Unmarshal(raw, &data)
 	return data
@@ -189,6 +193,8 @@ func TestTerminalViewsAreLeasedPerBoxAndEvictedByAge(t *testing.T) {
 			t.Fatalf("oldest view was not evicted: %v %s", data, text)
 		}
 	}
+	// At capacity, a new view of an open box replaces that box's older view
+	// rather than pausing another box.
 	again, _ := callTool(t, ctx, client, "terminal_open", map[string]any{"managerId": "b8"})
 	if again.IsError {
 		t.Fatal("reopen of b8 failed")
@@ -202,6 +208,9 @@ func TestTerminalViewsAreLeasedPerBoxAndEvictedByAge(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("older view of b8 was not superseded: %s", text)
 		}
+	}
+	if result, text := callTool(t, ctx, client, "terminal_read", map[string]any{"terminalId": ids[1], "after": 0}); result.IsError {
+		t.Fatalf("another box was paused instead: %s", text)
 	}
 }
 

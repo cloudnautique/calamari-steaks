@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +41,35 @@ type fileUpload struct {
 	size, offset int64
 	closed       bool
 	timer        *time.Timer
+}
+
+const uploadPrefix = "discobox-upload-"
+
+// SweepStaleUploads removes staging files an earlier adapter left behind after
+// an abnormal exit. Live uploads expire after five idle minutes, so a regular
+// file untouched for olderThan cannot belong to a running upload. Symlinks and
+// other entries are never followed or removed. It returns the number removed.
+func SweepStaleUploads(dir string, olderThan time.Duration) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	cutoff := time.Now().Add(-olderThan)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), uploadPrefix) || !entry.Type().IsRegular() {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.ModTime().After(cutoff) {
+			continue
+		}
+		if os.Remove(path) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 func (s *Server) CloseFileUploads() {
@@ -81,7 +112,7 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 		if _, err := rand.Read(key[:]); err != nil {
 			return nil, err
 		}
-		f, err := os.CreateTemp("", "discobox-upload-")
+		f, err := os.CreateTemp("", uploadPrefix)
 		if err != nil {
 			return nil, errors.New("could not stage a private upload")
 		}

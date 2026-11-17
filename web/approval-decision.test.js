@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {approvalPlan,decisionSummary} from './approval-decision.js';
+import {approvalPlan,decisionSummary,defaultApprovalTTL} from './approval-decision.js';
 const review={reviewToken:'private-review',request:{id:'sreq-a',sandboxId:'box-a',status:'pending',use:{add:false,routes:[{hosts:["api.example"]}]},delegate:{}},credentials:[{id:'secret-a',name:'GitHub',maxBindingTTLSeconds:7200}]};
 test('both use and delegation require explicit decisions and the confirmation names the exact target',()=>{
  assert.throws(()=>approvalPlan(review,{use:'approve',secretId:'secret-a',ttlSeconds:3600}),/each requested part/);
@@ -18,4 +18,9 @@ test('settled, expired and unavailable credential reviews cannot become approval
  assert.throws(()=>approvalPlan({...review,reviewToken:''},{}),/refreshed/);
  assert.throws(()=>approvalPlan(review,{use:'approve',delegate:'deny',secretId:'unavailable',ttlSeconds:3600}),/available credential/);
  for(const ttl of [0,-1,7201,2592001,Infinity])assert.throws(()=>approvalPlan(review,{use:'approve',delegate:'deny',secretId:'secret-a',ttlSeconds:ttl}));
+});
+
+test('approval duration defaults to at most one hour regardless of the box request',()=>{
+ assert.equal(defaultApprovalTTL(2592000),3600);assert.equal(defaultApprovalTTL(600),600);
+ for(const value of [0,-5,undefined,null,'86400',1.5,NaN])assert.equal(defaultApprovalTTL(value),3600);
 });

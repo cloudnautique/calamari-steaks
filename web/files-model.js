@@ -1,5 +1,9 @@
 export const FILE_CHUNK = 262144;
 export function parentDirectory(path) { const parts=path.split('/').filter(Boolean);parts.pop();return '/'+parts.join('/'); }
+// DOMPurify URI allow-list for rendered Markdown: http(s), same-box
+// discobox-file links, fragments and scheme-less relative paths. Anything with
+// another scheme (javascript:, ms-settings:, search-ms:, ...) is dropped.
+export const MARKDOWN_URI_PATTERN=/^(?:https?:|discobox-file:|[^:/?#]*(?:[/?#]|$))/i;
 export function resolveFileLink(href,uri) {
   if(typeof href!=='string'||!href.trim())return null;
   const base=new URL(uri);

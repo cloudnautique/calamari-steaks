@@ -108,8 +108,10 @@ Enable diagnostics with `--request-log`. Stderr records HTTP method/path/status
 and MCP method/tool duration and failure state, without request bodies, query
 strings, or authentication headers. `--access-token-file PRIVATE_FILE` reads a
 64-character hexadecimal token so restarts can preserve an existing local
-UI/MCP connection. Keep this file private (`0600`). Without the flag the token
-still changes per process. Manager state and Iroh identity are separate from
+UI/MCP connection. Keep this file private (`0600`); the adapter warns when it
+is readable by other users and never echoes a file-supplied token to stderr
+(the private links show a placeholder). Without the flag the token
+still changes per process and the private links print it. Manager state and Iroh identity are separate from
 this client access token.
 
 ## Identity and enrollment
@@ -179,6 +181,9 @@ the upstream public relay/discovery defaults.
 Normal JSON API requests and terminal WebSocket upgrades use the same upstream
 transport and identity. `DISCOBOX_MCP_TOKEN` remains an optional separate API
 bearer token, useful for HTTP endpoints; peer enrollment is handled by Iroh.
+The token is bound to the endpoint the launcher pins with `--discobox` or
+`DISCOBOX_MCP_ENDPOINT`: it is never sent to a saved or default profile, so a
+profile changed through the setup widget cannot redirect the credential.
 HTTP(S) origins and `unix:///absolute/server.sock` remain supported.
 
 Keep both the identity and manager state on durable storage. Manager selection

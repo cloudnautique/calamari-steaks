@@ -53,6 +53,8 @@ type Server struct {
 	approvalMu       sync.Mutex
 	approvalReviews  map[string]approvalReview
 	catalog          catalogCache
+	setupMu          sync.Mutex
+	setupTokens      map[string]time.Time
 }
 
 func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string, options discobox.ManagerOptions) (*Server, error) {
@@ -201,12 +203,13 @@ func (s *Server) browserHTTP(mux *http.ServeMux) {
 	s.setupHTTP(mux)
 	s.serviceHTTP(mux)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' "+strings.Replace(s.Origin, "http", "ws", 1)+"; img-src 'self' data:; font-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'")
 		html, err := web.HTML()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
+		// Allow exactly the inlined bundle by hash rather than 'unsafe-inline'.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self' "+web.ScriptHashes(html)+" 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' "+strings.Replace(s.Origin, "http", "ws", 1)+"; img-src 'self' data:; font-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(html))
 	})

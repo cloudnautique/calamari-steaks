@@ -40,7 +40,9 @@ for (const [source, name] of [
 // Brand values stay owned by Discobox, never duplicated in app CSS. They come
 // from the Go module this adapter pins, so no separate checkout is needed;
 // DISCOBOX_BRAND_TOKENS or a ./discobox checkout overrides it.
-await copyFile(await brandTokens(), new URL('tokens.css', destination));
+// Copy the bytes, not the file: the Go module cache is read-only, and a
+// copied mode would block the next build from overwriting it.
+await writeFile(new URL('tokens.css', destination), await readFile(await brandTokens()));
 const notices = [];
 const dependencies = new Set(['ghostty-web', '@modelcontextprotocol/ext-apps']);
 for (const path of Object.keys(bundled.metafile.inputs)) {

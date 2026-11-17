@@ -81,9 +81,9 @@ they may still log the traffic.
 
 - A widget instance attaches its terminal and polls only while visible. After
   a minute off screen it releases its stream (never while a person types).
-- One live terminal view per box: a newer view of the same box takes over the
-  stream, and the older one offers Reconnect. At 8 live views the least
-  recently used idle view is paused.
+- At 8 live terminal views a new view pauses an older idle view of the same
+  box first, otherwise the least recently used idle view; the paused view says
+  why and offers Reconnect. Below the cap, views of one box can coexist.
 - The catalog and inbox come from one adapter-wide cache, refreshed by the
   Discobox project event stream when the server has one and every 10 s
   otherwise.

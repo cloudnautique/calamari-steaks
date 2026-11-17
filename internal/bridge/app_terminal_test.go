@@ -27,15 +27,42 @@ func TestAppTerminalUsesMCPForReplayAndOwnership(t *testing.T) {
 		if result.IsError != wantError {
 			t.Fatalf("%s error=%t content=%v", name, result.IsError, result.Content)
 		}
-		var value map[string]any
-		data, _ := json.Marshal(result.StructuredContent)
-		json.Unmarshal(data, &value)
-		return value
+		return toolData(result)
 	}
 	opened := call("terminal_open", map[string]any{}, false)
 	id := opened["terminalId"].(string)
 	defer s.closeAppTerminal(id)
 	first := call("terminal_read", map[string]any{"terminalId": id, "after": 0}, false)
+	// Regression for SECURITY-REVIEW.md H3: the view handle is an input
+	// capability and the bytes are private; neither may reach model context.
+	// Read first: a second terminal_open of the same box supersedes the view.
+	for _, name := range []string{"terminal_read", "terminal_open"} {
+		args := map[string]any{"terminalId": id, "after": 0}
+		if name == "terminal_open" {
+			args = map[string]any{}
+		}
+		raw, err := client.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil || raw.IsError {
+			t.Fatalf("%s: %v %v", name, raw, err)
+		}
+		if raw.StructuredContent != nil {
+			t.Fatalf("%s used structuredContent", name)
+		}
+		visible, _ := json.Marshal(raw.Content)
+		private := toolData(raw)
+		for _, secret := range []string{id, "bWFuYWdlciByZWFkeQ0K", "manager ready"} {
+			if strings.Contains(string(visible), secret) {
+				t.Fatalf("%s leaked %q into model-visible content", name, secret)
+			}
+		}
+		if name == "terminal_open" {
+			if handle, _ := private["terminalId"].(string); handle == "" {
+				t.Fatal("terminal handle missing from _meta")
+			} else {
+				defer s.closeAppTerminal(handle)
+			}
+		}
+	}
 	repeated := call("terminal_read", map[string]any{"terminalId": id, "after": 0}, false)
 	if first["cursor"] != repeated["cursor"] {
 		t.Fatal("repeating a read lost output")

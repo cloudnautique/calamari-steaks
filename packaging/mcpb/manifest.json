@@ -52,7 +52,7 @@
     "api_token": {
       "type": "string",
       "title": "Discobox API token (if required)",
-      "description": "Optional upstream Discobox API credential. This is not the bearer token for a separately running MCP adapter.",
+      "description": "Optional upstream Discobox API credential, sent only to the Connection override endpoint; ignored when that is blank. This is not the bearer token for a separately running MCP adapter.",
       "sensitive": true,
       "required": false,
       "default": ""
