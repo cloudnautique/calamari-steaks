@@ -125,6 +125,15 @@ func (s *managerConnection) resizeAs(view string, resize func() error) (bool, er
 	return true, nil
 }
 
+// withInput runs write under the ownership lock, telling it whether owner
+// holds input control, so control cannot change between the check and the
+// write. A desktop viewer still writes, but only its non-input messages.
+func (s *managerConnection) withInput(owner string, write func(owned bool) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return write(!s.archived && s.controller == owner)
+}
+
 func (s *managerConnection) claim(owner string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -197,7 +206,7 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/ws") {
+		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/terminal") {
 			http.Error(w, "Connection setup required; open /setup using the private link", 503)
 			return
 		}

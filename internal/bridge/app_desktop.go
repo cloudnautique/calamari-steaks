@@ -48,6 +48,7 @@ type desktopSession struct {
 	writeMu       sync.Mutex
 	sequence      uint64
 	lastDigest    [32]byte
+	input         rfbInputFilter // guarded by writeMu
 }
 
 func desktopResult(data map[string]any) *mcp.CallToolResult {
@@ -206,18 +207,33 @@ func (v *desktopSession) write(sequence uint64, data []byte) error {
 	if sequence != v.sequence+1 {
 		return errors.New("desktop write sequence mismatch; reopen without replaying input")
 	}
-	if err := v.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return err
-	}
-	for len(data) > 0 {
-		n, err := v.conn.Write(data)
+	// Input from a view without control is dropped here, not only by noVNC's
+	// view-only mode in the widget.
+	err := v.manager.withInput(v.id, func(owned bool) error {
+		forward, err := v.input.filter(data, owned)
 		if err != nil {
 			return err
 		}
-		if n == 0 {
-			return errors.New("desktop write stalled")
+		if len(forward) == 0 {
+			return nil
 		}
-		data = data[n:]
+		if err := v.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			return err
+		}
+		for len(forward) > 0 {
+			n, err := v.conn.Write(forward)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return errors.New("desktop write stalled")
+			}
+			forward = forward[n:]
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	v.sequence = sequence
 	v.lastDigest = digest

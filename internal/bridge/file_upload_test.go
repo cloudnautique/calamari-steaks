@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
 	"github.com/cloudnautique/discobox-mcp-ui/internal/testhttp"
@@ -147,5 +148,64 @@ func TestPrivateUploadOrderingPermissionsAndCleanup(t *testing.T) {
 	s.CloseFileUploads()
 	if len(s.uploads) != 0 {
 		t.Fatal("shutdown leaked uploads")
+	}
+}
+
+// A commit in flight must not hold a lock that cancel, begin, expiry or
+// shutdown cleanup need; a host that times out finish sends cancel.
+func TestUploadCommitDoesNotStallOtherUploads(t *testing.T) {
+	network := testhttp.NewNetwork(t)
+	committing := make(chan struct{})
+	release := make(chan struct{})
+	backend := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/projects/p/sandboxes/box":
+			io.WriteString(w, `{"id":"box","parentSandboxId":"caller","runtime":{"desiredState":"present"}}`)
+		case "/api/projects/p/sandboxes/box/files/content":
+			io.ReadAll(r.Body)
+			close(committing)
+			<-release
+			json.NewEncoder(w).Encode(map[string]any{"path": "/workspace/a.txt", "name": "a.txt", "type": "file", "size": 1, "version": "v1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+	defer close(release)
+	client, _ := discobox.NewCatalog(backend.URL, "fixture", "p")
+	s, _ := New(client, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{Parent: "caller"})
+	t.Cleanup(s.CloseFileUploads)
+	ctx := context.Background()
+	begun, e := s.uploadFile(ctx, uploadInput{Action: "begin", BoxID: "box", Path: "/workspace/a.txt", Size: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	id := begun["uploadId"].(string)
+	if _, e := s.uploadFile(ctx, uploadInput{Action: "chunk", UploadID: id, Data: base64.StdEncoding.EncodeToString([]byte("a"))}); e != nil {
+		t.Fatal(e)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		_, e := s.uploadFile(ctx, uploadInput{Action: "finish", UploadID: id})
+		finished <- e
+	}()
+	<-committing
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.uploadFile(ctx, uploadInput{Action: "cancel", UploadID: id})
+		if _, e := s.uploadFile(ctx, uploadInput{Action: "begin", BoxID: "box", Path: "/workspace/b.txt", Size: 1}); e != nil {
+			t.Error("begin during commit:", e)
+		}
+		s.CloseFileUploads()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel, begin or cleanup stalled behind an in-flight commit")
+	}
+	release <- struct{}{}
+	if e := <-finished; e != nil {
+		t.Fatal("commit failed:", e)
 	}
 }

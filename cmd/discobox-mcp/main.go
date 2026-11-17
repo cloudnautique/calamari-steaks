@@ -101,15 +101,7 @@ func run() error {
 			startupError = e
 		}
 	}
-	if *endpoint != "" {
-		cfg.Endpoint = *endpoint
-	}
-	if projectGiven {
-		cfg.Project = *project
-	}
-	if len(relays) > 0 {
-		cfg.Relays = append([]string(nil), relays...)
-	}
+	cfg = applyLauncherOverrides(cfg, *endpoint, *project, projectGiven, relays)
 	var parent string
 	if *local {
 		if *endpoint != "" || *peerID || *identity != "" || len(relays) != 0 {
@@ -325,4 +317,23 @@ func run() error {
 	case err := <-serveErr:
 		return err
 	}
+}
+
+// applyLauncherOverrides lays explicit launcher settings over the saved
+// profile. Saved relays belong to the saved endpoint: an endpoint override
+// replaces them with only the --iroh-relay values, so an old server's relays
+// are neither applied to a new one nor left to fail validation for a local or
+// HTTP endpoint the read-only widget then cannot repair.
+func applyLauncherOverrides(cfg connection.Config, endpoint, project string, projectGiven bool, relays []string) connection.Config {
+	if endpoint != "" {
+		cfg.Endpoint = endpoint
+		cfg.Relays = nil
+	}
+	if projectGiven {
+		cfg.Project = project
+	}
+	if len(relays) > 0 {
+		cfg.Relays = append([]string(nil), relays...)
+	}
+	return cfg
 }

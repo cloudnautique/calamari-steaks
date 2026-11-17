@@ -74,7 +74,8 @@ CI builds and tests on macOS 26 Apple Silicon; Intel execution is not tested.
 
 The script builds and embeds the frontend before compiling, validates and
 packs with pinned `@anthropic-ai/mcpb`, and writes bundles plus SHA-256 checksums
-under `dist/`. It stages only the binary, manifest, installation guide, and frontend
+under `dist/`. It stages only the binary, manifest, installation guide
+(`INSTALL.md`), `connection-setup-widget.md`, `services.md`, and frontend
 third-party notices. It never packs the repository root, logs, screenshots,
 credentials, or enrollment keys. Iroh's platform library is embedded by its Go
 module. Developer dependencies are not shipped.

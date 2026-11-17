@@ -8,10 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cloudnautique/discobox-mcp-ui/internal/connection"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -78,5 +80,24 @@ func TestMCPBootstrapSurvivesMissingBackendAndBrokenSettings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLauncherEndpointOverrideDropsSavedRelays(t *testing.T) {
+	saved := connection.Config{Endpoint: "discobox://old", Project: "saved", Relays: []string{"https://relay.old.example"}}
+	got := applyLauncherOverrides(saved, "unix://", "", false, nil)
+	if got.Endpoint != "unix://" || got.Project != "saved" || got.Relays != nil {
+		t.Fatalf("endpoint override kept saved relays: %+v", got)
+	}
+	if e := connection.Validate(got); e != nil {
+		t.Fatalf("overridden local endpoint failed validation: %v", e)
+	}
+	got = applyLauncherOverrides(saved, "discobox://new", "", false, []string{"https://relay.new.example"})
+	if !slices.Equal(got.Relays, []string{"https://relay.new.example"}) {
+		t.Fatalf("explicit relays not applied: %+v", got)
+	}
+	got = applyLauncherOverrides(saved, "", "other", true, nil)
+	if got.Endpoint != "discobox://old" || got.Project != "other" || !slices.Equal(got.Relays, saved.Relays) {
+		t.Fatalf("project-only override changed the saved endpoint profile: %+v", got)
 	}
 }

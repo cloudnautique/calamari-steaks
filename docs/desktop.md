@@ -58,6 +58,22 @@ focus claim, then delivered in order after ownership is confirmed. Blur, tab
 changes, failed claims, or disconnects discard it; uncertain network input is
 never retried. A second view cannot take an existing controller's lease.
 
+The bridge enforces the lease, not only noVNC's view-only mode. Each view's
+`desktop_action` `write` stream is framed as RFB client messages
+([rfb_filter.go](../internal/bridge/rfb_filter.go)). Viewing messages
+(SetPixelFormat, SetEncodings, FramebufferUpdateRequest, EnableContinuousUpdates,
+ClientFence, and an extended clipboard capabilities announcement) always pass, so a viewer keeps receiving the screen. Input messages
+(KeyEvent, PointerEvent, QEMU extended key, ClientCutText, SetDesktopSize, xvp)
+are dropped unless that view holds input control, checked under the same lock
+that claims and releases it. Supported handshakes are RFB 3.7 and later with
+security None or VNC authentication, which covers x11vnc `-nopw`. RFB 3.3 is
+refused: there the server picks the security type, so the client stream alone
+cannot tell where its messages start. A stream the filter cannot
+frame closes the desktop rather than passing through. The filter withholds the
+ExtendedMouseButtons pseudo-encoding from SetEncodings, because its 7-byte
+PointerEvents cannot be framed from the client stream alone; mouse buttons
+beyond the seventh are therefore unavailable.
+
 The Display selector defaults to Fit display and also offers Adapt resolution and Actual size.
 Adapt requests the canvas resolution through noVNC only while this view owns
 input, where the VNC server supports remote resizing; local scaling remains the

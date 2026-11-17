@@ -198,7 +198,17 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		progress("Creating manager " + record.Name + " with Discobox API access")
 		box, err := c.request(ctx, http.MethodPost, "/projects/"+project+"/sandboxes", body)
 		if err != nil {
-			// Even an error response could follow a committed create. Leave the
+			if rejectedBeforeCommit(err) {
+				// Discobox validates a create (project, pool, harness, name,
+				// permissions) before committing it, so a definite rejection
+				// created nothing. Clear the intent so this requestId can be
+				// corrected and submitted again instead of staying pending forever.
+				if removeErr := os.Remove(options.StatePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+					return nil, fmt.Errorf("Discobox rejected manager create for %q, but its intent could not be cleared from %s: %w (%v)", record.Name, options.StatePath, err, removeErr)
+				}
+				return nil, fmt.Errorf("Discobox rejected manager create for %q; nothing was created, so correct the settings and submit again: %w", record.Name, err)
+			}
+			// Any other error response could follow a committed create. Leave the
 			// intent in place and require reconciliation rather than creating twice.
 			return nil, fmt.Errorf("manager create did not complete; inspect Discobox for %q before retrying (intent saved in %s): %w", record.Name, options.StatePath, err)
 		}
@@ -366,6 +376,23 @@ func (c *Client) awaitPrimary(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+// rejectedBeforeCommit reports whether a create error is a definite client
+// rejection. Upstream returns every 4xx from sandbox creation before its
+// commit transaction. 408 and 429 can come from an intermediary after the
+// request reached the server, and 409 is kept uncertain conservatively, so
+// those, transport errors and 5xx keep the intent for reconciliation.
+func rejectedBeforeCommit(err error) bool {
+	var status *HTTPError
+	if !errors.As(err, &status) || status.Status < 400 || status.Status >= 500 {
+		return false
+	}
+	switch status.Status {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests:
+		return false
+	}
+	return true
 }
 
 func readManagerRecord(path string) (managerRecord, error) {

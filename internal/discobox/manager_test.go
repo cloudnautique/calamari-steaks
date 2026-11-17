@@ -295,3 +295,46 @@ func TestBootstrapPreflightFailureLeavesNoIntent(t *testing.T) {
 		t.Fatalf("left creation intent after preflight: %v", err)
 	}
 }
+
+// A definite rejection created nothing, so it must not wedge the intent; an
+// uncertain status keeps it and is never retried.
+func TestRejectedCreateClearsIntentButUncertainStatusKeepsIt(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		cleared bool
+	}{{404, true}, {400, true}, {422, true}, {409, false}, {429, false}, {502, false}} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			network := testhttp.NewNetwork(t)
+			var creates atomic.Int32
+			server := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if emptyDiscoveryAndTag(t, w, r) {
+					return
+				}
+				if r.Method == "GET" {
+					w.Write([]byte(`{"defaultHarnessConfigId":"codex"}`))
+					return
+				}
+				creates.Add(1)
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+			opts := ManagerOptions{StatePath: filepath.Join(t.TempDir(), "manager.json"), CreateOnly: true}
+			for range 2 {
+				if _, err := EnsureManager(context.Background(), server.URL, "", "default", opts); err == nil {
+					t.Fatal("failed create succeeded")
+				}
+			}
+			_, statErr := os.Stat(opts.StatePath)
+			if cleared := os.IsNotExist(statErr); cleared != tc.cleared {
+				t.Fatalf("intent cleared=%v, want %v", cleared, tc.cleared)
+			}
+			want := int32(1)
+			if tc.cleared {
+				want = 2
+			}
+			if creates.Load() != want {
+				t.Fatalf("creates=%d, want %d", creates.Load(), want)
+			}
+		})
+	}
+}

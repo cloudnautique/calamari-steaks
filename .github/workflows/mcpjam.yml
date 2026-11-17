@@ -52,12 +52,14 @@ jobs:
           npm run build
           mkdir -p "$RUNNER_TEMP/mcpjam/reports"
           go build -o "$RUNNER_TEMP/mcpjam/discobox-mcp" ./cmd/discobox-mcp
-          cat > "$RUNNER_TEMP/mcpjam/adapter-stdio" <<'SH'
+          # Unquoted: expand RUNNER_TEMP now, so the wrapper does not depend on
+          # the MCP client passing RUNNER_TEMP into the server's environment.
+          cat > "$RUNNER_TEMP/mcpjam/adapter-stdio" <<SH
           #!/bin/sh
           unset DISCOBOX_MCP_TOKEN DISCOBOX_MCP_ENDPOINT DISCOBOX_MCP_PROJECT
-          exec "$RUNNER_TEMP/mcpjam/discobox-mcp" --browse \
-            --discobox http://127.0.0.1:1 \
-            --connection-config "$RUNNER_TEMP/mcpjam/unused-profile.json" \
+          exec "$RUNNER_TEMP/mcpjam/discobox-mcp" --browse \\
+            --discobox http://127.0.0.1:1 \\
+            --connection-config "$RUNNER_TEMP/mcpjam/unused-profile.json" \\
             --iroh-identity "$RUNNER_TEMP/mcpjam/unused-identity.pem"
           SH
           chmod 700 "$RUNNER_TEMP/mcpjam/adapter-stdio"

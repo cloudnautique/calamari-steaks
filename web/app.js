@@ -474,23 +474,31 @@ byId('create-button').onclick = async (event) => {
   for (const id of ['manager-name','task','harness','model','pool']) byId(id).disabled = true;
   byId('creation-intent').hidden = false;
   byId('creation-intent').textContent = `Creation reference: ${createRequestId}. If interrupted, reuse this exact requestId and settings with launch_box; do not start another intent before checking your boxes.`;
-  button.disabled = true; button.textContent = 'Starting box…'; notice.hidden = true;
+  button.disabled = true; button.textContent = 'Starting box…'; notice.hidden = true; byId('discard-creation').hidden = true;
   let created;
   try {
     created = await workspaceCall('launch_box', launchIntent);
     shareWidgetAction('box_launched',{ boxId:created.boxId || created.managerId, task:launchIntent.task.slice(0,2000), taskTruncated:launchIntent.task.length > 2000 });
   } catch (error) {
-    report(error); button.textContent = 'Check same creation'; return;
+    report(error); button.textContent = 'Check same creation'; byId('discard-creation').hidden = false;
+    byId('creation-intent').textContent = `Creation reference: ${createRequestId}. Check same creation resubmits this exact intent. If Discobox rejected it, or you have checked your boxes and it was not created, discard it to edit the settings; discarding an intent that did create a box lets the next start create another.`;
+    return;
   } finally { button.disabled = false; }
-  createRequestId = undefined; launchIntent = undefined;
-  for (const id of ['manager-name','task','harness','model','pool']) byId(id).disabled = false;
-  name.value = ''; task.value = ''; button.textContent = 'Start box'; byId('creation-intent').hidden = true;
+  endCreationIntent();
+  name.value = ''; task.value = '';
   // Once creation is confirmed, a catalog or view failure must not turn the
   // launch button into a retry of another creation.
   try { managerCatalog = await workspaceCall('list_boxes'); } catch (error) { report(error); }
   try { await start({ ...created, view: 'workspace' }); } catch (error) { report(error); }
   refreshInbox();
 };
+// The only way to leave a frozen creation intent is this explicit choice.
+function endCreationIntent() {
+  createRequestId = undefined; launchIntent = undefined;
+  for (const id of ['manager-name','task','harness','model','pool']) byId(id).disabled = false;
+  byId('create-button').textContent = 'Start box'; byId('creation-intent').hidden = true; byId('discard-creation').hidden = true;
+}
+byId('discard-creation').onclick = () => { if (!byId('create-button').disabled) endCreationIntent(); };
 byId('manager-name').onkeydown = (event) => {
   if (event.key === 'Enter') { event.preventDefault(); if (!byId('create-button').disabled) byId('create-button').click(); }
 };

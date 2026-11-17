@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,5 +57,21 @@ func TestSetupAvailableWithNoBackend(t *testing.T) {
 	}
 	if result.Meta["onboarding"] == nil {
 		t.Fatal("missing app-only status payload")
+	}
+}
+
+// The terminal WebSocket dereferences the backend client, so it must be gated
+// like /api/ while setup is required.
+func TestTerminalGatedWithNoBackend(t *testing.T) {
+	s, e := New(nil, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/terminal", nil)
+	request.Header.Set("Origin", "http://127.0.0.1:8080")
+	recorder := httptest.NewRecorder()
+	s.Handler(nil).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("terminal with no backend: status %d %q", recorder.Code, recorder.Body.String())
 	}
 }

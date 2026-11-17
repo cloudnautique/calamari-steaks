@@ -24,8 +24,14 @@ Iroh identity:
 
 ```sh
 discobox api-access request --reason 'Connect the MCP adapter to a persistent manager'
-./bin/discobox-mcp --local --transport http --listen 127.0.0.1:8080
+./bin/discobox-mcp --local --browse=false --transport http --listen 127.0.0.1:8080
 ```
+
+`--browse` defaults to true, which starts the box picker and never discovers,
+adopts or creates a manager at startup. It is switched off implicitly by
+`--box`, `--manager-state`, `--harness` or `--pool`; otherwise pass
+`--browse=false`, as here, for the startup discovery and creation described
+below.
 
 The access request waits for a person to approve it. Once enabled, `--local`
 reads `DISCOBOX_API_URL` (falling back to `DISCOBOX_SERVER`), takes the calling
@@ -51,7 +57,7 @@ the person's approval:
 
 ```sh
 discobox adopt MANAGER_BOX_ID --reason 'Connect the local MCP adapter to this manager'
-./bin/discobox-mcp --local --transport http --listen 127.0.0.1:8080
+./bin/discobox-mcp --local --browse=false --transport http --listen 127.0.0.1:8080
 ```
 
 Discovery considers tagged managers led by this sandbox. With no existing
@@ -75,7 +81,7 @@ remains unverified.
 
 ## MCP App canvas and diagnostics
 
-`open_manager` points to `ui://discobox/manager-v2.html`, served by MCP
+`open_manager` points to `ui://discobox/workspace-v15.html`, served by MCP
 `resources/read` with MIME type `text/html;profile=mcp-app`. Its HTML contains
 the SDK, terminal renderer, WASM and styles in one response. An embedded canvas
 does not fetch scripts or WASM from the adapter's loopback HTTP listener and
