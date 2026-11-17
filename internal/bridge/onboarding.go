@@ -25,35 +25,35 @@ func (s *Server) setupController() (*connection.Controller, error) {
 }
 func (s *Server) onboardingTools(server *mcp.Server) {
 	ui := mcp.Meta{"ui": map[string]any{"resourceUri": setupResourceURI}}
-	mcp.AddTool(server, &mcp.Tool{Name: "open_connection_setup", Description: "SHOW UI: connect to Discobox using the local socket or a pinned remote Iroh server. Always available, including offline. Shows peer enrollment instructions; cannot authorize itself or create boxes.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Status, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "open_connection_setup", Description: "SHOW UI: connect to Discobox using the local socket or a pinned remote Iroh server. Always available, including offline. Shows peer enrollment instructions; cannot authorize itself or create boxes.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
 		c, e := s.setupController()
 		if e != nil {
-			return nil, connection.Status{}, e
+			return nil, nil, e
 		}
 		status := c.Status()
 		result := setupResult(status)
 		result.Content = []mcp.Content{&mcp.TextContent{Text: status.Message + " Local setup uses the shared Discobox resolver: unix:// on macOS/Linux or npipe:// on Windows. For a remote server, enter its discobox:// peer address, call get_connection_peer_id, and have an already-authorized operator run the returned enrollment command on the intended server. The widget cannot approve itself. Saving in the widget applies the connection at once where the adapter allows it; otherwise restart the adapter. Text-only clients can set --discobox and --project launcher flags (or the extension overrides), then restart and call test_connection. Do not paste private keys or credentials into chat."}}
 		return result, status, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "connection_status", Description: "Show the Discobox connection settings, the last test (with its layer-by-layer diagnosis), when backend traffic last succeeded or failed, and whether a restart is needed. Does not contact the backend; use test_connection for a fresh check.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Status, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "connection_status", Description: "Show the Discobox connection settings, the last test (with its layer-by-layer diagnosis), when backend traffic last succeeded or failed, and whether a restart is needed. Does not contact the backend; use test_connection for a fresh check.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
 		c, e := s.setupController()
 		if e != nil {
-			return nil, connection.Status{}, e
+			return nil, nil, e
 		}
 		return nil, c.Status(), nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "test_connection", Description: "Test the configured Discobox connection layer by layer (address, identity, relay, peer, admission, server) and read the project's catalog. A timeout does not prove enrollment was denied. No creation, input, enrollment or automatic retry.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Result, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "test_connection", Description: "Test the configured Discobox connection layer by layer (address, identity, relay, peer, admission, server) and read the project's catalog. A timeout does not prove enrollment was denied. No creation, input, enrollment or automatic retry.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
 		c, e := s.setupController()
 		if e != nil {
-			return nil, connection.Result{}, e
+			return nil, nil, e
 		}
 		r, e := c.Test(ctx, c.Current)
 		return nil, r, e
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "get_connection_peer_id", Description: "Load or initialize this adapter's persistent identity and return only its public peer ID and copyable operator enrollment command. No server connection or enrollment is performed. Never request private key contents."}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Status, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "get_connection_peer_id", Description: "Load or initialize this adapter's persistent identity and return only its public peer ID and copyable operator enrollment command. No server connection or enrollment is performed. Never request private key contents."}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
 		c, e := s.setupController()
 		if e != nil {
-			return nil, connection.Status{}, e
+			return nil, nil, e
 		}
 		r, e := c.Identity()
 		return nil, r, e

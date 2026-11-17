@@ -59,7 +59,7 @@ func TestToolSurfaceSnapshot(t *testing.T) {
 	init := client.InitializeResult()
 	total := modelBytes + len(init.Instructions)
 	t.Logf("model-visible tool schemas %d B, instructions %d B", modelBytes, len(init.Instructions))
-	if len(init.Instructions) > 1600 || total > 22<<10 {
+	if len(init.Instructions) > 1600 || total > 18<<10 {
 		t.Errorf("model-visible surface grew: schemas %d B + instructions %d B", modelBytes, len(init.Instructions))
 	}
 	if init.ServerInfo.Name != "discobox" {
