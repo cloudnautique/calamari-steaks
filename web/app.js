@@ -613,6 +613,7 @@ try {
     resizeWidget();
     await refreshInbox();
   } else {
+    watchVisibility();
     const token = new URLSearchParams(location.hash.slice(1)).get('token');
     history.replaceState(null, '', location.pathname);
     if (!token) throw new Error('Open the private terminal link printed by the MCP server.');
@@ -630,7 +631,7 @@ function watchVisibility() {
     widgetVisible = visible;
     clearTimeout(hiddenTimer);
     if (visible) {
-      refreshInbox();
+      if (!app || hostReady) refreshInbox();
       if (selectedBoxId && !byId('workspace').hidden && activeTab === 'terminal' && !connected) ensureAttached().catch(handleConnectionFailure);
     } else {
       clearTimeout(inboxTimer);
