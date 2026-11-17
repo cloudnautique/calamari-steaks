@@ -274,7 +274,27 @@ func (c *Client) ReadFile(ctx context.Context, id, parent, target string, offset
 
 // WriteFile uploads one complete file atomically through Discobox's files API.
 // Existing paths are refused; a private upload never overwrites workspace data.
+// WriteOptions control how an upload meets an existing file.
+type WriteOptions struct {
+	// ReplaceVersion replaces the file only while it is still at this
+	// version (from a stat). Empty refuses to touch an existing file.
+	ReplaceVersion string
+	// Parents creates missing parent folders.
+	Parents bool
+}
+
+// ErrFileExists means an upload would overwrite an existing file. The text
+// starts with a stable code the widget uses to offer a checked replace.
+var ErrFileExists = errors.New("file_exists: a file with this name already exists; nothing was written")
+
+// ErrFileChanged means a version-checked write found a different file.
+var ErrFileChanged = errors.New("the file exists or changed since you looked at it; nothing was written. Review it, then choose Replace again")
+
 func (c *Client) WriteFile(ctx context.Context, id, parent, target string, body io.Reader, size int64) (FileInfo, error) {
+	return c.WriteFileWith(ctx, id, parent, target, body, size, WriteOptions{})
+}
+
+func (c *Client) WriteFileWith(ctx context.Context, id, parent, target string, body io.Reader, size int64, options WriteOptions) (FileInfo, error) {
 	clean, err := cleanFilePath(target)
 	if err != nil {
 		return FileInfo{}, err
@@ -287,6 +307,15 @@ func (c *Client) WriteFile(ctx context.Context, id, parent, target string, body 
 		return FileInfo{}, err
 	}
 	query := url.Values{"path": {clean}, "ifExists": {"fail"}}
+	if options.ReplaceVersion != "" {
+		if len(options.ReplaceVersion) > 256 {
+			return FileInfo{}, errors.New("invalid file version")
+		}
+		query = url.Values{"path": {clean}, "ifExists": {"replace"}, "ifVersion": {options.ReplaceVersion}}
+	}
+	if options.Parents {
+		query.Set("parents", "true")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+root+"/content?"+query.Encode(), io.LimitReader(body, size))
 	if err != nil {
 		return FileInfo{}, err
@@ -299,6 +328,12 @@ func (c *Client) WriteFile(ctx context.Context, id, parent, target string, body 
 		return FileInfo{}, errors.New("upload delivery was not confirmed; inspect the folder before trying again")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusPreconditionFailed {
+		if options.ReplaceVersion == "" {
+			return FileInfo{}, ErrFileExists
+		}
+		return FileInfo{}, ErrFileChanged
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return FileInfo{}, &HTTPError{Status: resp.StatusCode, Path: root + "/content"}
 	}
@@ -311,6 +346,40 @@ func (c *Client) WriteFile(ctx context.Context, id, parent, target string, body 
 	}
 	if info.Path != clean || info.Type != "file" || info.Size != size {
 		return info, errors.New("upload returned unexpected file metadata; inspect the folder")
+	}
+	info.URI, err = FileURI(c.Session.Project, id, clean)
+	return info, err
+}
+
+// MakeFolder creates a folder (and missing parents) inside a box. An existing
+// folder is not an error.
+func (c *Client) MakeFolder(ctx context.Context, id, parent, target string) (FileInfo, error) {
+	clean, err := cleanFilePath(target)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	root, err := c.fileRoot(ctx, id, parent)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	raw, err := c.request(ctx, http.MethodPost, root+"/mkdir", map[string]any{"path": clean, "parents": true})
+	if err != nil {
+		var status *HTTPError
+		if errors.As(err, &status) && status.Status == http.StatusConflict {
+			return FileInfo{}, errors.New("a file with that name already exists")
+		}
+		return FileInfo{}, err
+	}
+	encoded, _ := json.Marshal(raw)
+	var info FileInfo
+	if err := json.Unmarshal(encoded, &info); err != nil {
+		return FileInfo{}, errors.New("invalid folder response")
+	}
+	if info.Path == "" {
+		info.Path, info.Type = clean, "directory"
+	}
+	if err := c.decorateFile(&info); err != nil {
+		return info, err
 	}
 	info.URI, err = FileURI(c.Session.Project, id, clean)
 	return info, err

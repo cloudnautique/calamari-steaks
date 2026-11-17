@@ -64,7 +64,7 @@ func TestMCPBootstrapSurvivesMissingBackendAndBrokenSettings(t *testing.T) {
 			}
 			defer session.Close()
 			tools, e := session.ListTools(ctx, nil)
-			if e != nil || len(tools.Tools) != 42 {
+			if e != nil || len(tools.Tools) != 43 {
 				t.Fatalf("discovery failed: %v %v", tools, e)
 			}
 			r, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "open_connection_setup", Arguments: map[string]any{}})

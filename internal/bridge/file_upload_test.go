@@ -149,3 +149,67 @@ func TestPrivateUploadOrderingPermissionsAndCleanup(t *testing.T) {
 		t.Fatal("shutdown leaked uploads")
 	}
 }
+
+func TestVersionCheckedReplaceAndNewFolder(t *testing.T) {
+	network := testhttp.NewNetwork(t)
+	current := "v1"
+	var mkdirs atomic.Int32
+	backend := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/projects/p/sandboxes/box":
+			io.WriteString(w, `{"id":"box","runtime":{"desiredState":"present"}}`)
+		case "/api/projects/p/sandboxes/box/files/content":
+			q := r.URL.Query()
+			data, _ := io.ReadAll(r.Body)
+			switch {
+			case q.Get("ifExists") == "fail":
+				w.WriteHeader(412) // the file exists
+			case q.Get("ifExists") == "replace" && q.Get("ifVersion") == current:
+				current = "v2"
+				json.NewEncoder(w).Encode(map[string]any{"path": "/workspace/report.txt", "name": "report.txt", "type": "file", "size": len(data), "version": current})
+			default:
+				w.WriteHeader(412) // changed since the person looked
+			}
+		case "/api/projects/p/sandboxes/box/files/mkdir":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["path"] != "/workspace/new/sub" || body["parents"] != true {
+				t.Errorf("mkdir body %v", body)
+			}
+			mkdirs.Add(1)
+			io.WriteString(w, `{"path":"/workspace/new/sub","name":"sub","type":"directory","size":0}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	client, _ := discobox.NewCatalog(backend.URL, "", "p")
+	s, _ := New(client, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{})
+	t.Cleanup(s.CloseFileUploads)
+	ctx := context.Background()
+	upload := func(replace string) error {
+		started, err := s.uploadFile(ctx, uploadInput{Action: "begin", BoxID: "box", Path: "/workspace/report.txt", Size: 2, ReplaceVersion: replace})
+		if err != nil {
+			return err
+		}
+		id := started["uploadId"].(string)
+		if _, err := s.uploadFile(ctx, uploadInput{Action: "chunk", UploadID: id, Data: base64.StdEncoding.EncodeToString([]byte("hi"))}); err != nil {
+			return err
+		}
+		_, err = s.uploadFile(ctx, uploadInput{Action: "finish", UploadID: id})
+		return err
+	}
+	if err := upload(""); err == nil || !strings.HasPrefix(err.Error(), "file_exists:") {
+		t.Fatalf("existing file: %v", err)
+	}
+	if err := upload("v0"); err == nil || !strings.Contains(err.Error(), "changed since") {
+		t.Fatalf("stale replace: %v", err)
+	}
+	if err := upload("v1"); err != nil {
+		t.Fatalf("checked replace: %v", err)
+	}
+	mcp := mcpClient(t, ctx, s)
+	result, text := callTool(t, ctx, mcp, "file_mkdir", map[string]any{"boxId": "box", "path": "/workspace/new/sub"})
+	if result.IsError || mkdirs.Load() != 1 {
+		t.Fatalf("mkdir: %s", text)
+	}
+}

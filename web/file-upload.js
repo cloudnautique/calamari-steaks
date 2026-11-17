@@ -1,12 +1,12 @@
 export const MAX_UPLOAD_SIZE=16*1024*1024;
-export async function uploadFile(call,file,{boxId,directory,current=()=>true,progress=()=>{}}){
+export async function uploadFile(call,file,{boxId,directory,current=()=>true,progress=()=>{},replaceVersion}){
  if(!boxId||!directory.startsWith('/')||!file.name||/[\\/\x00]/.test(file.name)||['.','..'].includes(file.name))throw Error('Choose a file and a destination folder in this box.');
  if(file.size>MAX_UPLOAD_SIZE)throw Error('Files must be at most 16 MiB.');
  const path=`${directory.replace(/\/$/,'')}/${file.name}`;
  let uploadId;
  try{
   if(!current())throw Error('Destination changed; no file was uploaded.');
-  const started=await call('file_upload',{action:'begin',boxId,path,size:file.size});
+  const started=await call('file_upload',{action:'begin',boxId,path,size:file.size,...(replaceVersion?{replaceVersion}:{})});
   uploadId=started.uploadId;
   if(typeof uploadId!=='string'||!Number.isSafeInteger(started.chunkSize)||started.chunkSize<1||started.chunkSize>192*1024)throw Error('Invalid upload session.');
   for(let offset=0;offset<file.size;){

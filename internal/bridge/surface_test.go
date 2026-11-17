@@ -20,7 +20,7 @@ import (
 // these lists deliberately, together with docs/contract.md.
 var (
 	modelTools = []string{"archive_box", "close_service_forward", "connection_status", "control_box", "control_service", "get_connection_peer_id", "interrupt_box", "launch_box", "list_approval_requests", "list_attention", "list_box_files", "list_boxes", "list_service_forwards", "list_services", "open_approval", "open_box", "open_connection_setup", "open_service", "read_box", "read_box_file", "read_service_logs", "send_box", "test_connection", "wait_box"}
-	appTools   = []string{"approval_decide", "approval_list", "approval_review", "catalog_read", "connection_save", "connection_test", "desktop_action", "desktop_open", "desktop_read", "file_read", "file_stat", "file_upload", "service_keepalive", "service_logs", "service_open_browser", "terminal_action", "terminal_open", "terminal_read"}
+	appTools   = []string{"approval_decide", "approval_list", "approval_review", "catalog_read", "connection_save", "connection_test", "desktop_action", "desktop_open", "desktop_read", "file_mkdir", "file_read", "file_stat", "file_upload", "service_keepalive", "service_logs", "service_open_browser", "terminal_action", "terminal_open", "terminal_read"}
 )
 
 func TestToolSurfaceSnapshot(t *testing.T) {
