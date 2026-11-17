@@ -32,7 +32,7 @@ default: omitting it still starts the picker unless `--box`, `--manager-state`,
 `--browse=false`, and `--box` still pins an explicit startup default. `examples/mcp-local.json` launches the workspace over stdio.
 
 For an existing HTTP client connection, reload MCP discovery after upgrading
-so the client sees the new tools and `ui://discobox/workspace-v15.html` resource.
+so the client sees the new tools and `ui://discobox/workspace-v16.html` resource.
 Previously published terminal resource URIs remain readable.
 
 ## Text and UI operations
@@ -173,8 +173,9 @@ console. This adapter does not collect credential values or approve requests
 under the person's identity. Use the Discobox console's approval inbox to answer
 requests, then refresh this view.
 
-The current resource is `ui://discobox/workspace-v15.html`. Previously published
-resource URIs remain aliases so restored desktop sessions can still initialize.
+The current resource is `ui://discobox/workspace-v16.html` (see
+`docs/contract.md`). Earlier URIs are served through an unlisted template so
+restored desktop sessions can still initialize.
 
 This task-first pass was verified against the live local API in an opaque
 Chromium iframe with `connect-src 'none'`: launch, overview message and actual

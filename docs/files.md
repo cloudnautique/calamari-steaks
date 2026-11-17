@@ -12,7 +12,7 @@ Ask the assistant to open a file, naming its box ID and absolute path, for examp
 Open /workspace/report.md from box sbx_example in the Files canvas.
 ```
 
-The assistant calls `open_box_file`, which stats the actual file and returns
+The assistant calls `open_box(boxId, view:"files", filePath)`, which stats the actual file and returns
 both its resource link and the existing self-contained MCP App in Files mode.
 This does not need primary-exec discovery or terminal attachment. File API reads
 can wake a stopped box. Archived boxes must be restored in Discobox first.
@@ -31,7 +31,8 @@ the new selection. Directory navigation never retargets an already-started read.
 - `read_box_file(boxId, path, offset?, length?)`: default 64 KiB and at most
   256 KiB per byte range. Actual content appears once in the tool content;
   structured metadata describes the box, file, version, offset, and truncation.
-- `open_box_file(boxId, path)`: open a regular file in the Files canvas.
+- `open_box(boxId, view:"files", filePath?)`: open a regular file (or the folder
+  browser) in the Files canvas. `open_box_file` remains with `--legacy-manager-tools`.
 - App-only `file_read` returns bounded preview chunks once in structured data;
   `file_stat` checks metadata/version. These calls are hidden from the model.
 
@@ -117,7 +118,10 @@ temporary directory's ACLs), expires after five inactive minutes, and is removed
 on success, failure, cancellation, or normal adapter shutdown. A crash can leave a private OS temporary file.
 
 The adapter rechecks the pinned box's authority at commit and uses Discobox's
-atomic `PUT /files/content?ifExists=fail`. Existing files are refused. It does not
-create missing folders, automatically retry chunks/commits, or send file content
-or upload handles into model-visible results. Switching boxes cancels an unfinished
-upload. To replace an existing file, choose a different name for this version.
+atomic `PUT /files/content?ifExists=fail`. When the file exists, the widget shows
+its size and date and offers **Replace**, which writes with
+`ifExists=replace&ifVersion=<that version>`, so a file changed in the meantime is
+refused (412) rather than overwritten. **New folder** creates a folder (with
+parents) through the app-only `file_mkdir`. The adapter never retries
+chunks/commits automatically or sends file content or upload handles into
+model-visible results. Switching boxes cancels an unfinished upload.

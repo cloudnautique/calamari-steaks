@@ -13,5 +13,6 @@ test('ended, replaced and unauthorized sessions do not silently reconnect',()=>{
  assert.equal(canReconnect(new Error('network disconnected')),true);
  assert.equal(canReconnect({sessionEnded:true}),false);
  assert.equal(canReconnect({sessionChanged:true}),false);
+ assert.equal(canReconnect({evicted:'superseded'}),false);
  assert.equal(canReconnect(new Error('Discobox returned HTTP 403')),false);
 });

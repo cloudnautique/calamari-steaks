@@ -11,17 +11,22 @@ export class FilesView {
     $('files-upload').onclick=()=>$('files-upload-input').click();
     $('files-upload-input').onchange=async()=>{
       const input=$('files-upload-input'),file=input.files?.[0];input.value='';if(!file||this.uploading)return;
-      const {boxId,directory}=this.model.state,epoch=this.model.epoch;
-      this.uploading=true;$('files-upload').disabled=true;
-      const current=()=>this.model.state.boxId===boxId&&this.model.epoch===epoch;
-      const progress=(n,total)=>{if(current())$('files-upload-status').textContent=`Uploading ${file.name} · ${total?Math.round(n/total*100):100}%`;};
-      progress(0,file.size);
-      try{
-        const info=await uploadFile(call,file,{boxId,directory,current,progress});
-        if(current()){$('files-upload-status').textContent=`Uploaded ${info.name} to ${info.path}. File bytes stayed out of chat.`;await this.model.list(directory);}
-      }catch(error){if(current())$('files-upload-status').textContent=error.message+' Nothing was automatically retried. Existing files are never overwritten.';}
-      finally{this.uploading=false;$('files-upload').disabled=false;}
+      await this.upload(call,file);
     };
+    $('files-new-folder').onclick=()=>{const row=$('files-folder-row');row.hidden=!row.hidden;if(!row.hidden){$('files-folder-name').value='';$('files-folder-name').focus();}};
+    $('files-folder-cancel').onclick=()=>{$('files-folder-row').hidden=true;};
+    const createFolder=()=>this.perform(async()=>{
+      const name=$('files-folder-name').value.trim();
+      if(!name||name.includes('/')||name==='.'||name==='..')throw Error('Enter a folder name without slashes.');
+      const {boxId,directory}=this.model.state;
+      const path=(directory.endsWith('/')?directory:directory+'/')+name;
+      await call('file_mkdir',{boxId,path});
+      $('files-folder-row').hidden=true;
+      this.activity('folder_created',{boxId,path});
+      await this.model.list(path);
+    },'files-upload-status');
+    $('files-folder-create').onclick=createFolder;
+    $('files-folder-name').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();createFolder();}};
     $('files-go').onclick=() => this.model.list($('files-path').value);
     $('files-path').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();this.model.list($('files-path').value)}};
     $('files-up').onclick=()=>this.model.list(parentDirectory(this.model.state.directory));
@@ -47,7 +52,32 @@ export class FilesView {
       try {const target=resolveFileLink(link.getAttribute('href'),this.model.state.file.uri);if(!target)throw Error('This link is not a file in the selected box or an HTTP(S) URL.');if(target.external)this.perform(()=>this.external(target.external));else if(target.path===this.model.state.file.path&&target.hash){}else this.openFile(target.path);}catch(error){$('file-notice').textContent=error.message}
     };
   }
-  async perform(action) {try{await action()}catch(error){$('file-notice').textContent=error.message}}
+  async perform(action,notice='file-notice') {try{await action()}catch(error){$(notice).textContent=error.message}}
+  // Upload one file into the open folder. An existing file is never
+  // overwritten silently: the person sees what is there and confirms, and the
+  // replace only lands if that file has not changed since.
+  async upload(call,file,replaceVersion){
+    const {boxId,directory}=this.model.state,epoch=this.model.epoch;
+    this.uploading=true;$('files-upload').disabled=true;$('files-replace').hidden=true;
+    const current=()=>this.model.state.boxId===boxId&&this.model.epoch===epoch;
+    const progress=(n,total)=>{if(current())$('files-upload-status').textContent=`Uploading ${file.name} · ${total?Math.round(n/total*100):100}%`;};
+    progress(0,file.size);
+    try{
+      const info=await uploadFile(call,file,{boxId,directory,current,progress,replaceVersion});
+      if(current()){$('files-upload-status').textContent=`${replaceVersion?'Replaced':'Uploaded'} ${info.name} at ${info.path}. File bytes stayed out of chat.`;await this.model.list(directory);}
+    }catch(error){
+      if(!current())return;
+      if(!replaceVersion&&/^file_exists:/.test(error.message)){
+        const path=(directory.endsWith('/')?directory:directory+'/')+file.name;
+        try{
+          const existing=await call('file_stat',{boxId,path});
+          $('files-upload-status').textContent=`${file.name} already exists here (${(existing.size??0).toLocaleString()} bytes${existing.modifiedAt?`, updated ${new Date(existing.modifiedAt).toLocaleString()}`:''}).`;
+          const button=$('files-replace');button.hidden=false;button.textContent=`Replace ${file.name}`;
+          button.onclick=()=>{button.hidden=true;this.upload(call,file,existing.version);};
+        }catch{ $('files-upload-status').textContent=`${file.name} already exists here. Rename the file to upload it.`; }
+      } else $('files-upload-status').textContent=error.message+' Nothing was automatically retried.';
+    }finally{this.uploading=false;$('files-upload').disabled=false;}
+  }
   async open(boxId,path) {
     this.model.bind(boxId);this.setActive(true);
     if(path)await Promise.all([this.model.list(parentDirectory(path)),this.openFile(path)]);

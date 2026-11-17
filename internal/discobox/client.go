@@ -130,7 +130,17 @@ func (c *Client) headers() http.Header {
 	return h
 }
 
+const defaultResponseLimit = 2 << 20
+
+// listingResponseLimit admits a whole project catalog, whose entries carry
+// each box's full task prompt (up to 64 KiB).
+const listingResponseLimit = 32 << 20
+
 func (c *Client) request(ctx context.Context, method, path string, body any) (map[string]any, error) {
+	return c.requestLimited(ctx, method, path, body, defaultResponseLimit)
+}
+
+func (c *Client) requestLimited(ctx context.Context, method, path string, body any, limit int) (map[string]any, error) {
 	var data []byte
 	var err error
 	if body != nil {
@@ -152,13 +162,12 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (ma
 		return nil, fmt.Errorf("Discobox request failed: %w", err)
 	}
 	defer response.Body.Close()
-	const limit = 2 << 20
-	data, err = io.ReadAll(io.LimitReader(response.Body, limit+1))
+	data, err = io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(data) > limit {
-		return nil, errors.New("Discobox response exceeded 2 MiB; request less output")
+		return nil, fmt.Errorf("Discobox response exceeded %d MiB; request less output", limit>>20)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		// Do not forward arbitrary upstream error bodies or credential-bearing URLs.
@@ -184,10 +193,12 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("Discobox returned HTTP %d for %s", e.Status, e.Path)
 }
 
-var errNoPrimary = errors.New("no primary exec found; start the manager using Discobox, then retry")
+// ErrNoPrimary means the box has no primary session yet, usually because it
+// is still provisioning or its harness has not started.
+var ErrNoPrimary = errors.New("this box has no terminal session yet; it may still be starting")
 
-// ResolvePrimary pins the current primary exec once. Replacements require reconnecting
-// the integration rather than silently directing subsequent input to a new process.
+// ResolvePrimary pins the current primary exec. The bridge re-resolves only on
+// an explicit reopen, never to silently redirect input to a new process.
 func (c *Client) ResolvePrimary(ctx context.Context) error {
 	if c.Session.Exec != "primary" {
 		return nil
@@ -203,13 +214,13 @@ func (c *Client) ResolvePrimary(ctx context.Context) error {
 		entry, _ := item.(map[string]any)
 		if entry["primary"] == true {
 			if found != "" {
-				return errors.New("multiple primary execs reported; specify --exec")
+				return errors.New("Discobox reported more than one primary session for this box; open it in the Discobox console to choose one")
 			}
 			found, _ = entry["id"].(string)
 		}
 	}
 	if found == "" {
-		return errNoPrimary
+		return ErrNoPrimary
 	}
 	if !identifier.MatchString(found) {
 		return errors.New("invalid primary exec ID from Discobox")
@@ -222,7 +233,8 @@ func (c *Client) Screen(ctx context.Context, scrollback int) (map[string]any, er
 	if scrollback < 0 || scrollback > 500 {
 		return nil, errors.New("scrollback must be between 0 and 500")
 	}
-	return c.request(ctx, http.MethodGet, fmt.Sprintf("%s/screen?scrollback=%d", c.execPath(), scrollback), nil)
+	result, err := c.request(ctx, http.MethodGet, fmt.Sprintf("%s/screen?scrollback=%d", c.execPath(), scrollback), nil)
+	return result, sessionError(err)
 }
 
 func (c *Client) Send(ctx context.Context, text string, submit bool) (map[string]any, error) {
@@ -233,22 +245,131 @@ func (c *Client) Send(ctx context.Context, text string, submit bool) (map[string
 	if submit {
 		parts = append(parts, map[string]string{"key": "Enter"})
 	}
-	return c.request(ctx, http.MethodPost, c.execPath()+"/input", map[string]any{"input": parts})
+	result, err := c.request(ctx, http.MethodPost, c.execPath()+"/input", map[string]any{"input": parts})
+	return result, sessionError(err)
 }
 
 func (c *Client) Interrupt(ctx context.Context) (map[string]any, error) {
-	return c.request(ctx, http.MethodPost, c.execPath()+"/input", map[string]any{"input": []map[string]string{{"key": "C-c"}}})
+	result, err := c.request(ctx, http.MethodPost, c.execPath()+"/input", map[string]any{"input": []map[string]string{{"key": "C-c"}}})
+	return result, sessionError(err)
 }
 
-func (c *Client) Wait(ctx context.Context, after string, seconds int) (map[string]any, error) {
-	if after == "" || len(after) > 256 {
-		return nil, errors.New("after must be the resumeAfter cursor from send or wait")
+// MaxWaitSeconds keeps one wait inside the ~60 second tool-call budget that
+// MCP hosts apply, leaving room for transport latency and the response.
+const MaxWaitSeconds = 45
+
+// Wait conditions. Each one also ends on the exec exiting.
+const (
+	UntilSettled    = "settled"     // any reported idle, done, blocked or error state, or a Stop/Notification hook
+	UntilTurnEnd    = "turn_end"    // the agent's turn ended: Stop hook or idle, done or error state
+	UntilNeedsInput = "needs_input" // the agent is blocked on the person: Notification hook or blocked state
+	UntilQuiet      = "quiet"       // no output or input for QuietSeconds
+)
+
+type WaitOptions struct {
+	// After is a resumeAfter cursor. Without it the wait counts from the last
+	// input this adapter sent, or from the start of the wait if none was sent.
+	After        string
+	Until        string
+	QuietSeconds int
+	Seconds      int
+}
+
+func waitStates(states ...string) []map[string]string {
+	result := make([]map[string]string, 0, len(states))
+	for _, state := range states {
+		result = append(result, map[string]string{"state": state})
 	}
-	if seconds < 1 || seconds > 60 {
-		return nil, errors.New("timeout must be between 1 and 60 seconds")
+	return result
+}
+
+func waitCondition(options WaitOptions) (map[string]any, error) {
+	until := map[string]any{"exit": true}
+	switch options.Until {
+	case "", UntilSettled:
+		until["programStates"] = waitStates("idle", "done", "blocked", "error")
+		until["hookEvents"] = []string{"Stop", "Notification"}
+	case UntilTurnEnd:
+		until["programStates"] = waitStates("idle", "done", "error")
+		until["hookEvents"] = []string{"Stop"}
+	case UntilNeedsInput:
+		until["programStates"] = waitStates("blocked")
+		until["hookEvents"] = []string{"Notification"}
+	case UntilQuiet:
+		quiet := options.QuietSeconds
+		if quiet == 0 {
+			quiet = 10
+		}
+		if quiet < 1 || quiet > 600 {
+			return nil, errors.New("quietSeconds must be between 1 and 600")
+		}
+		until["quietSeconds"] = quiet
+	default:
+		return nil, errors.New("until must be settled, turn_end, needs_input or quiet")
 	}
-	return c.request(ctx, http.MethodPost, c.execPath()+"/wait", map[string]any{
-		"timeoutSeconds": seconds, "until": map[string]any{"after": after, "exit": true,
-			"programStates": []map[string]string{{"state": "idle"}, {"state": "done"}, {"state": "blocked"}, {"state": "error"}}},
-	})
+	if options.After != "" {
+		until["after"] = options.After
+	} else {
+		until["fromLastInput"] = true
+	}
+	return until, nil
+}
+
+// Wait blocks until a condition holds or the timeout passes. Every answer
+// carries resumeAfter; pass it back as After so nothing between calls is missed.
+func (c *Client) Wait(ctx context.Context, options WaitOptions) (map[string]any, error) {
+	if len(options.After) > 256 {
+		return nil, errors.New("after must be the resumeAfter cursor from launch, send or wait")
+	}
+	if options.Seconds == 0 {
+		options.Seconds = 30
+	}
+	if options.Seconds < 1 || options.Seconds > MaxWaitSeconds {
+		return nil, fmt.Errorf("timeoutSeconds must be between 1 and %d", MaxWaitSeconds)
+	}
+	until, err := waitCondition(options)
+	if err != nil {
+		return nil, err
+	}
+	result, err := c.request(ctx, http.MethodPost, c.execPath()+"/wait", map[string]any{"timeoutSeconds": options.Seconds, "until": until})
+	var status *HTTPError
+	if err != nil && errors.As(err, &status) && status.Status == http.StatusBadRequest {
+		// Older servers predate hook events and fromLastInput. A wait is
+		// read-only, so asking again with only the legacy fields is safe.
+		legacy := map[string]any{"exit": true}
+		for _, key := range []string{"programStates", "quietSeconds", "after"} {
+			if value, ok := until[key]; ok {
+				legacy[key] = value
+			}
+		}
+		if legacy["programStates"] == nil && legacy["quietSeconds"] == nil {
+			return nil, err
+		}
+		result, err = c.request(ctx, http.MethodPost, c.execPath()+"/wait", map[string]any{"timeoutSeconds": options.Seconds, "until": legacy})
+	}
+	return result, sessionError(err)
+}
+
+// Cursor returns a resumeAfter for "now" by asking for a one-second wait.
+// A later wait passed this cursor sees every hook and status after it.
+func (c *Client) Cursor(ctx context.Context) (string, error) {
+	result, err := c.request(ctx, http.MethodPost, c.execPath()+"/wait", map[string]any{"timeoutSeconds": 1, "until": map[string]any{"exit": true}})
+	if err != nil {
+		return "", sessionError(err)
+	}
+	cursor, _ := result["resumeAfter"].(string)
+	return cursor, nil
+}
+
+// ErrSessionReplaced reports that the pinned exec no longer exists. The
+// adapter never retargets input on its own; reopening the box adopts the
+// box's current primary session.
+var ErrSessionReplaced = errors.New("this box's terminal session ended or was replaced; call open_box to adopt its current session (no input was sent to the new session)")
+
+func sessionError(err error) error {
+	var status *HTTPError
+	if err != nil && errors.As(err, &status) && (status.Status == http.StatusNotFound || status.Status == http.StatusGone) {
+		return fmt.Errorf("%w: %v", ErrSessionReplaced, err)
+	}
+	return err
 }

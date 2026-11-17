@@ -26,7 +26,7 @@ func TestSetupAvailableWithNoBackend(t *testing.T) {
 	}, errors.New("fixture startup failure"))
 	client := mcpClient(t, ctx, s)
 	listed, e := client.ListTools(ctx, nil)
-	if e != nil || len(listed.Tools) != 53 {
+	if e != nil || len(listed.Tools) != 43 {
 		t.Fatalf("list tools: %v %v", listed, e)
 	}
 	for _, name := range []string{"connection_status", "open_connection_setup", "get_connection_peer_id", "test_connection"} {
@@ -39,7 +39,7 @@ func TestSetupAvailableWithNoBackend(t *testing.T) {
 	if e != nil || !result.IsError {
 		t.Fatalf("backend call was not gated: %v %+v", e, result)
 	}
-	html, e := client.ReadResource(ctx, &mcp.ReadResourceParams{URI: setupResource})
+	html, e := client.ReadResource(ctx, &mcp.ReadResourceParams{URI: setupResourceURI})
 	if e != nil || !strings.Contains(html.Contents[0].Text, "Connect to Discobox") {
 		t.Fatal("setup resource unavailable", e)
 	}

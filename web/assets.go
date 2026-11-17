@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // The wildcard includes vendor when present, while allowing a tools-only build.
@@ -25,7 +26,32 @@ func Ready() error {
 	return nil
 }
 
-func HTML() (string, error) {
+// The pages are built from embedded, immutable files, so each is assembled
+// once per process. A failed build (assets missing) is not cached.
+var (
+	pagesMu sync.Mutex
+	pages   = map[string]string{}
+)
+
+func cached(name string, build func() (string, error)) (string, error) {
+	pagesMu.Lock()
+	defer pagesMu.Unlock()
+	if page, ok := pages[name]; ok {
+		return page, nil
+	}
+	page, err := build()
+	if err == nil {
+		pages[name] = page
+	}
+	return page, err
+}
+
+func HTML() (string, error) { return cached("workspace", buildHTML) }
+
+// SetupHTML is a small independent app, available even with no backend client.
+func SetupHTML() (string, error) { return cached("setup", buildSetupHTML) }
+
+func buildHTML() (string, error) {
 	if err := Ready(); err != nil {
 		return "", err
 	}
@@ -51,8 +77,7 @@ func HTML() (string, error) {
 	return strings.NewReplacer("<!--STYLE-->", "<style>"+string(tokens)+string(css)+"</style>", "<!--SCRIPT-->", "<script type=\"module\">"+script+"</script>").Replace(string(html)), nil
 }
 
-// SetupHTML is a small independent app, available even with no backend client.
-func SetupHTML() (string, error) {
+func buildSetupHTML() (string, error) {
 	html, err := files.ReadFile("onboarding.html")
 	if err != nil {
 		return "", err

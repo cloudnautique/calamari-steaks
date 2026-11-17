@@ -32,21 +32,26 @@ func TestViewSelectionIsScopedAndFilesNeedNoTerminal(t *testing.T) {
 	defer backend.Close()
 	client, _ := discobox.NewCatalog(backend.URL, "", "p")
 	server, _ := New(client, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{Parent: "caller"})
+	server.LegacyTools = true
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	mcpClient := mcpClient(t, ctx, server)
-	for _, view := range []string{"files", "desktop", "terminal"} {
-		result, err := mcpClient.CallTool(ctx, &mcp.CallToolParams{Name: "show_box_view", Arguments: map[string]any{"boxId": "box", "view": view}})
+	for _, call := range []struct{ tool, view string }{{"open_box", "files"}, {"open_box", "desktop"}, {"show_box_view", "files"}, {"show_box_view", "terminal"}, {"open_box", "terminal"}} {
+		view := call.view
+		result, err := mcpClient.CallTool(ctx, &mcp.CallToolParams{Name: call.tool, Arguments: map[string]any{"boxId": "box", "view": view}})
 		if err != nil || result.IsError {
 			t.Fatalf("view %s failed: %v %v", view, result, err)
 		}
 		var data map[string]any
 		raw, _ := json.Marshal(result.StructuredContent)
 		json.Unmarshal(raw, &data)
+		if view == "terminal" {
+			view = "workspace"
+		}
 		if data["view"] != view || data["boxId"] != "box" {
 			t.Fatal("navigation retargeted view")
 		}
-		if view != "terminal" && execReads != 0 {
+		if call.view != "terminal" && execReads != 0 {
 			t.Fatal("file/desktop navigation depended on a terminal")
 		}
 	}

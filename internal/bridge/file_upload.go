@@ -27,11 +27,17 @@ type uploadInput struct {
 	Size     int64  `json:"size,omitempty"`
 	Offset   int64  `json:"offset,omitempty"`
 	Data     string `json:"data,omitempty"`
+	// ReplaceVersion replaces an existing file only at this version.
+	ReplaceVersion string `json:"replaceVersion,omitempty"`
+	// Parents creates missing parent folders.
+	Parents bool `json:"parents,omitempty"`
 }
 type fileUpload struct {
+	client       *discobox.Client // the connection generation the upload began on
 	mu           sync.Mutex
 	file         *os.File
 	box, path    string
+	options      discobox.WriteOptions
 	size, offset int64
 	closed       bool
 	timer        *time.Timer
@@ -91,10 +97,10 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 		if in.Size < 0 || in.Size > maxUploadSize {
 			return nil, errors.New("upload limit is 16 MiB per file")
 		}
-		if _, err := discobox.FileURI(s.Client.Session.Project, in.BoxID, in.Path); err != nil {
+		if _, err := discobox.FileURI(s.backend().Session.Project, in.BoxID, in.Path); err != nil {
 			return nil, err
 		}
-		if err := s.Client.BoxAccess(ctx, in.BoxID, s.managerOptions.Parent); err != nil {
+		if err := s.backend().BoxAccess(ctx, in.BoxID, s.managerOptions.Parent); err != nil {
 			return nil, err
 		}
 		s.uploadMu.Lock()
@@ -111,7 +117,7 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 			return nil, errors.New("could not stage a private upload")
 		}
 		id := hex.EncodeToString(key[:])
-		u := &fileUpload{file: f, box: in.BoxID, path: in.Path, size: in.Size}
+		u := &fileUpload{client: s.backend(), file: f, box: in.BoxID, path: in.Path, size: in.Size, options: discobox.WriteOptions{ReplaceVersion: in.ReplaceVersion, Parents: in.Parents}}
 		if s.uploads == nil {
 			s.uploads = make(map[string]*fileUpload)
 		}
@@ -190,14 +196,27 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	info, err := s.Client.WriteFile(ctx, u.box, s.managerOptions.Parent, u.path, u.file, u.size)
+	info, err := u.client.WriteFileWith(ctx, u.box, s.managerOptions.Parent, u.path, u.file, u.size, u.options)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"file": info}, nil
 }
+
+type mkdirInput struct {
+	BoxID string `json:"boxId"`
+	Path  string `json:"path"`
+}
+
 func (s *Server) fileUploadTools(server *mcp.Server) {
-	mcp.AddTool(server, &mcp.Tool{Name: "file_upload", Description: "App-only private file upload in bounded chunks. Never request file bytes in chat. Existing files are refused; uncertain writes are not retried.", Meta: mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}}, func(ctx context.Context, _ *mcp.CallToolRequest, in uploadInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "file_mkdir", Description: "App-only: create a folder (and missing parents) inside a box at the person's request.", Meta: mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}}, func(ctx context.Context, _ *mcp.CallToolRequest, in mkdirInput) (*mcp.CallToolResult, map[string]any, error) {
+		info, err := s.backend().MakeFolder(ctx, in.BoxID, s.managerOptions.Parent, in.Path)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, map[string]any{"folder": info}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "file_upload", Description: "App-only private file upload in bounded chunks. Never request file bytes in chat. An existing file is replaced only with the version the person confirmed; uncertain writes are not retried.", Meta: mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}}, func(ctx context.Context, _ *mcp.CallToolRequest, in uploadInput) (*mcp.CallToolResult, any, error) {
 		data, err := s.uploadFile(ctx, in)
 		if err != nil {
 			return nil, nil, err

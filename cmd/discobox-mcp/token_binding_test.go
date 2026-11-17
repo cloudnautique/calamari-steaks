@@ -108,7 +108,7 @@ func TestAccessTokenFromFileIsNotLogged(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestBootstrapProcess$", "--", "--connection-config", filepath.Join(dir, "connection.json"), "--iroh-identity", filepath.Join(dir, "key.pem"), "--access-token-file", tokenFile)
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestBootstrapProcess$", "--", "--connection-config", filepath.Join(dir, "connection.json"), "--iroh-identity", filepath.Join(dir, "key.pem"), "--access-token-file", tokenFile, "--browser-ui")
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		if !strings.HasPrefix(key, "DISCOBOX_") {
@@ -128,7 +128,7 @@ func TestAccessTokenFromFileIsNotLogged(t *testing.T) {
 	}
 	session.Close()
 	logged := stderr.String()
-	if !strings.Contains(logged, "Local terminal (private link): http://127.0.0.1:") {
+	if !strings.Contains(logged, "Local browser workspace (private link): http://127.0.0.1:") {
 		t.Fatalf("private link line missing from stderr:\n%s", logged)
 	}
 	if strings.Contains(logged, fixture) {

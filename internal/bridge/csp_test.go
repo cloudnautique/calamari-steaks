@@ -21,6 +21,7 @@ func TestPagesAllowOnlyTheirOwnInlineScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.BrowserUI = true
 	s.Onboarding = connection.New(connection.Config{Endpoint: "unix://", Project: "default"}, t.TempDir()+"/c.json", t.TempDir()+"/id", false, nil, nil)
 	handler := s.Handler(nil)
 	for _, page := range []string{"/", "/setup"} {

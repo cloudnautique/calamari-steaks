@@ -9,11 +9,11 @@ on the user's machine. Discobox itself must already be running and accessible.
 
 Choose the bundle matching your machine:
 
-- `discobox-mcp-0.11.0-darwin-universal.mcpb`: Mac (native Apple Silicon and Intel).
-- `discobox-mcp-0.11.0-windows-amd64.mcpb`: Windows x64.
-- `discobox-mcp-0.11.0-windows-arm64.mcpb`: Windows ARM64.
-- `discobox-mcp-0.11.0-linux-amd64.mcpb`: Linux x64 (glibc build).
-- `discobox-mcp-0.11.0-linux-arm64.mcpb`: Linux ARM64 (glibc build).
+- `discobox-mcp-0.12.0-darwin-universal.mcpb`: Mac (native Apple Silicon and Intel).
+- `discobox-mcp-0.12.0-windows-amd64.mcpb`: Windows x64.
+- `discobox-mcp-0.12.0-windows-arm64.mcpb`: Windows ARM64.
+- `discobox-mcp-0.12.0-linux-amd64.mcpb`: Linux x64 (glibc build).
+- `discobox-mcp-0.12.0-linux-arm64.mcpb`: Linux ARM64 (glibc build).
 
 In Claude Desktop, open Settings → Extensions → Advanced settings → Install
 Extension, then select the bundle. Organization policies may restrict local
@@ -25,7 +25,8 @@ but native macOS installation still needs testing.
 Leave the optional connection/project overrides blank for guided setup. Once
 installed, ask the assistant to **connect to Discobox**. The setup widget discovers
 the local socket or guides remote peer enrollment, tests the connection, and saves
-a private profile. Restart the adapter to apply changed settings. See
+a private profile, which applies immediately; open views keep their previous
+connection. See
 [connection-setup-widget.md](connection-setup-widget.md).
 
 Advanced overrides pin the connection and make the widget read-only. The endpoint

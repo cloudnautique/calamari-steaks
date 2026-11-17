@@ -81,7 +81,8 @@ remains unverified.
 
 ## MCP App canvas and diagnostics
 
-`open_manager` points to `ui://discobox/workspace-v15.html`, served by MCP
+`open_box` (and, with `--legacy-manager-tools`, `open_manager`) points to
+`ui://discobox/workspace-v16.html` at 0.12; this section describes the original `manager-v2.html` bundle, served by MCP
 `resources/read` with MIME type `text/html;profile=mcp-app`. Its HTML contains
 the SDK, terminal renderer, WASM and styles in one response. An embedded canvas
 does not fetch scripts or WASM from the adapter's loopback HTTP listener and

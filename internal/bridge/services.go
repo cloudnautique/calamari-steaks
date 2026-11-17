@@ -9,7 +9,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
@@ -17,7 +19,24 @@ import (
 )
 
 const forwardIdle = 15 * time.Minute
+
+// forwardBusyIdle bounds a forward whose connections stay open but quiet,
+// such as a dev server's live-reload socket.
+const forwardBusyIdle = 2 * time.Hour
 const forwardLimit = 8
+
+// Browsers open many parallel connections. Up to forwardConnections are
+// spliced at once; up to forwardQueue more wait briefly for a slot rather
+// than being reset.
+const (
+	forwardConnections = 32
+	forwardQueue       = 64
+	forwardQueueWait   = 15 * time.Second
+	// A per-connection destination check is skipped while the forward's
+	// last validation is this recent; watchForward revalidates on the same
+	// cadence, so revocation still closes the forward within about 30 s.
+	forwardValidation = 30 * time.Second
+)
 
 // No application bytes pass through a tool result or model context.
 type forwardInfo struct {
@@ -32,15 +51,18 @@ type forwardInfo struct {
 	Message   string    `json:"message"`
 }
 type serviceForward struct {
-	target   discobox.ServicePort
-	info     forwardInfo
-	listener net.Listener
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	last     time.Time
-	conns    map[net.Conn]bool
-	slots    chan struct{}
+	client    *discobox.Client // the connection generation this forward was opened on
+	target    discobox.ServicePort
+	info      forwardInfo
+	listener  net.Listener
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	last      time.Time
+	validated time.Time // last confirmation of access and destination, guarded by mu
+	conns     map[net.Conn]bool
+	slots     chan struct{}
+	queued    atomic.Int32
 }
 type serviceInput struct {
 	BoxID     string `json:"boxId"`
@@ -79,7 +101,7 @@ func (s *Server) forwards(box string) []forwardInfo {
 		if box == "" || f.info.BoxID == box {
 			info := f.info
 			f.mu.Lock()
-			info.ExpiresAt = f.last.Add(forwardIdle)
+			info.ExpiresAt = f.last.Add(f.idleLimit())
 			f.mu.Unlock()
 			out = append(out, info)
 		}
@@ -154,10 +176,10 @@ func (s *Server) openForward(ctx context.Context, in serviceInput) (forwardInfo,
 	case s.serviceOpenSlots <- struct{}{}:
 		defer func() { <-s.serviceOpenSlots }()
 	default:
-		return forwardInfo{}, errors.New("connection tests are busy; wait before another explicit open")
+		return forwardInfo{}, errors.New("another forward is being opened; wait a moment and open this one again")
 	}
 	// Revalidate even an existing forward before returning it.
-	probe, port, e := s.Client.DialServicePort(ctx, in.BoxID, s.managerOptions.Parent, in.Port)
+	probe, port, e := s.backend().DialServicePort(ctx, in.BoxID, s.managerOptions.Parent, in.Port)
 	if e != nil {
 		var h *discobox.HTTPError
 		if errors.As(e, &h) && h.Status == 403 {
@@ -182,7 +204,7 @@ func (s *Server) openForward(ctx context.Context, in serviceInput) (forwardInfo,
 		s.serviceMu.Unlock()
 		return forwardInfo{}, errors.New("eight forwards are already open; close one before opening another")
 	}
-	listener, e := net.Listen("tcp", "127.0.0.1:0")
+	listener, e := s.listenForward(in.BoxID, in.Port)
 	if e != nil {
 		s.serviceMu.Unlock()
 		return forwardInfo{}, errors.New("could not reserve a loopback port")
@@ -198,15 +220,84 @@ func (s *Server) openForward(ctx context.Context, in serviceInput) (forwardInfo,
 	if port.Protocol == "http" || port.Protocol == "https" {
 		info.URL = port.Protocol + "://" + info.Address + "/"
 	}
-	f := &serviceForward{target: port, info: info, listener: listener, ctx: lifetime, cancel: cancel, last: time.Now(), conns: map[net.Conn]bool{}, slots: make(chan struct{}, 8)}
+	f := &serviceForward{client: s.backend(), target: port, info: info, listener: listener, ctx: lifetime, cancel: cancel, last: time.Now(), validated: time.Now(), conns: map[net.Conn]bool{}, slots: make(chan struct{}, forwardConnections)}
 	s.serviceForwards[info.ID] = f
 	s.serviceMu.Unlock()
 	go s.serveForward(f)
 	go s.watchForward(f)
 	return info, nil
 }
+
+// listenForward binds the box's own port number on loopback when it is free,
+// else the address this (box, port) had before in this process, else any
+// free port, so URLs, bookmarks and OAuth callbacks survive a reopen.
+// Called with serviceMu held.
+func (s *Server) listenForward(box string, port int) (net.Listener, error) {
+	key := forwardKey{box: box, port: port}
+	candidates := []string{}
+	if previous := s.forwardPorts[key]; previous != "" {
+		candidates = append(candidates, previous)
+	}
+	if port >= 1024 {
+		candidates = append(candidates, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	}
+	candidates = append(candidates, "127.0.0.1:0")
+	var listener net.Listener
+	var e error
+	for _, address := range candidates {
+		if listener, e = net.Listen("tcp", address); e == nil {
+			break
+		}
+	}
+	if e != nil {
+		return nil, e
+	}
+	s.forwardPorts[key] = listener.Addr().String()
+	return listener, nil
+}
+
+type forwardKey struct {
+	box  string
+	port int
+}
+
+func (f *serviceForward) idleLimit() time.Duration {
+	if len(f.conns) > 0 {
+		return forwardBusyIdle
+	}
+	return forwardIdle
+}
+
+// validate re-reads the box's catalog. It closes the forward when access is
+// gone or the destination changed; a port that is briefly unreported (a
+// restarting dev server) only clears the cached validation.
+func (s *Server) validate(f *serviceForward) (discobox.ServicePort, bool) {
+	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
+	defer cancel()
+	target, e := f.client.ResolveServicePort(ctx, f.info.BoxID, s.managerOptions.Parent, f.info.Port)
+	switch {
+	case errors.Is(e, discobox.ErrPortNotReported):
+		f.mu.Lock()
+		f.validated = time.Time{}
+		f.mu.Unlock()
+		return target, false
+	case e != nil:
+		if f.ctx.Err() == nil {
+			s.closeForwardReason(f.info.ID, "Closed because box access could not be revalidated; refresh and reopen explicitly")
+		}
+		return target, false
+	case target.Host != f.target.Host || target.Protocol != f.target.Protocol || target.ServiceID != f.target.ServiceID:
+		s.closeForwardReason(f.info.ID, "Closed because the reported destination changed")
+		return target, false
+	}
+	f.mu.Lock()
+	f.validated = time.Now()
+	f.mu.Unlock()
+	return target, true
+}
+
 func (s *Server) watchForward(f *serviceForward) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(forwardValidation)
 	defer ticker.Stop()
 	for {
 		select {
@@ -214,19 +305,13 @@ func (s *Server) watchForward(f *serviceForward) {
 			return
 		case <-ticker.C:
 			f.mu.Lock()
-			expired := time.Since(f.last) > forwardIdle
+			expired := time.Since(f.last) > f.idleLimit()
 			f.mu.Unlock()
 			if expired {
-				s.closeForwardReason(f.info.ID, "Expired after 15 minutes without traffic or widget renewal")
+				s.closeForwardReason(f.info.ID, "Expired after a period without traffic or widget renewal")
 				return
 			}
-			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
-			e := s.Client.BoxAccess(ctx, f.info.BoxID, s.managerOptions.Parent)
-			cancel()
-			if e != nil {
-				s.closeForwardReason(f.info.ID, "Closed because box access could not be revalidated; refresh and reopen explicitly")
-				return
-			}
+			s.validate(f)
 		}
 	}
 }
@@ -236,36 +321,65 @@ func (s *Server) serveForward(f *serviceForward) {
 		if e != nil {
 			return
 		}
+		if tcp, ok := local.(*net.TCPConn); ok {
+			tcp.SetKeepAlive(true)
+			tcp.SetKeepAlivePeriod(30 * time.Second)
+		}
 		select {
 		case f.slots <- struct{}{}:
+			s.startSplice(f, local)
+			continue
 		default:
+		}
+		if f.queued.Add(1) > forwardQueue {
+			f.queued.Add(-1)
 			local.Close()
 			continue
 		}
-		f.mu.Lock()
-		f.conns[local] = true
-		f.last = time.Now()
-		f.mu.Unlock()
-		go s.spliceForward(f, local)
+		go func() {
+			defer f.queued.Add(-1)
+			timer := time.NewTimer(forwardQueueWait)
+			defer timer.Stop()
+			select {
+			case f.slots <- struct{}{}:
+				s.startSplice(f, local)
+			case <-timer.C:
+				local.Close()
+			case <-f.ctx.Done():
+				local.Close()
+			}
+		}()
 	}
+}
+func (s *Server) startSplice(f *serviceForward, local net.Conn) {
+	f.mu.Lock()
+	f.conns[local] = true
+	f.last = time.Now()
+	f.mu.Unlock()
+	go s.spliceForward(f, local)
 }
 func (s *Server) spliceForward(f *serviceForward, local net.Conn) {
 	defer func() { local.Close(); f.mu.Lock(); delete(f.conns, local); f.mu.Unlock(); <-f.slots }()
-	remote, target, e := s.Client.DialServicePort(f.ctx, f.info.BoxID, s.managerOptions.Parent, f.info.Port)
+	f.mu.Lock()
+	target, fresh := f.target, time.Since(f.validated) < forwardValidation
+	f.mu.Unlock()
+	if !fresh {
+		var ok bool
+		if target, ok = s.validate(f); !ok {
+			return
+		}
+	}
+	remote, e := f.client.DialResolvedPort(f.ctx, f.info.BoxID, target)
 	if e != nil {
 		return
 	}
 	defer remote.Close()
-	if target.Host != f.target.Host || target.Protocol != f.target.Protocol || target.ServiceID != f.target.ServiceID {
-		s.closeForwardReason(f.info.ID, "Closed because the reported destination changed")
-		return
-	}
+	// Established streams have no idle deadline: quiet WebSockets and SSE
+	// stay open. TCP keepalive and the forward's own expiry bound them.
 	touch := func() {
 		f.mu.Lock()
 		f.last = time.Now()
 		f.mu.Unlock()
-		local.SetDeadline(time.Now().Add(5 * time.Minute))
-		remote.SetDeadline(time.Now().Add(5 * time.Minute))
 	}
 	touch()
 	done := make(chan error, 2)
@@ -303,11 +417,11 @@ func (w *forwardWriter) Write(p []byte) (int, error) {
 	return n, e
 }
 func (s *Server) servicesData(ctx context.Context, box string) (map[string]any, error) {
-	catalog, e := s.Client.Services(ctx, box, s.managerOptions.Parent)
+	catalog, e := s.backend().Services(ctx, box, s.managerOptions.Parent)
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"view": "services", "boxId": box, "project": s.Client.Session.Project, "catalog": catalog, "forwards": s.forwards(box), "closedForwards": s.closedForwards(box), "forwardingAvailable": s.managerOptions.Parent == ""}, nil
+	return map[string]any{"view": "services", "boxId": box, "project": s.backend().Session.Project, "catalog": catalog, "forwards": s.forwards(box), "closedForwards": s.closedForwards(box), "forwardingAvailable": s.managerOptions.Parent == ""}, nil
 }
 func servicePrivate(data any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Service app response; details are delivered privately to the widget."}}, Meta: mcp.Meta{"services": data}}
@@ -328,7 +442,7 @@ func (s *Server) serviceTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{Name: "control_service", Description: "Explicitly start, stop or restart a declared service by boxId/serviceId. Does not create declarations. No automatic retry after an uncertain response; inspect state before another action."}, func(ctx context.Context, _ *mcp.CallToolRequest, in serviceActionInput) (*mcp.CallToolResult, map[string]any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 		defer cancel()
-		data, e := s.Client.ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
+		data, e := s.backend().ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
 		return nil, data, e
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "open_service", Description: "Open a loopback TCP forward for a currently reported/declared box port. May wake it. Requires an authorized host connection; sandbox API roles cannot tunnel. Does not start the service. The address is on the adapter's machine, not a hosted preview. HTTP(S) ports include a browser URL; bytes stay outside model context.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, in servicePortInput) (*mcp.CallToolResult, map[string]any, error) {
@@ -338,7 +452,7 @@ func (s *Server) serviceTools(server *mcp.Server) {
 		if e != nil {
 			return nil, nil, e
 		}
-		return workspaceResult(map[string]any{"view": "services", "boxId": in.BoxID, "project": s.Client.Session.Project, "forward": info})
+		return workspaceResult(map[string]any{"view": "services", "boxId": in.BoxID, "project": s.backend().Session.Project, "forward": info})
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "close_service_forward", Description: "Close only this adapter's selected forward and its connections. Does not stop the remote service."}, func(ctx context.Context, _ *mcp.CallToolRequest, in forwardInput) (*mcp.CallToolResult, map[string]any, error) {
 		e := s.closeForward(in.ForwardID)
@@ -350,13 +464,13 @@ func (s *Server) serviceTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{Name: "read_service_logs", Description: "TEXT ONLY: explicitly read up to 64 KiB of recent untrusted service logs. Logs may contain sensitive application output; use the Services widget for private viewing.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, in serviceTargetInput) (*mcp.CallToolResult, map[string]any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		data, e := s.Client.ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
+		data, e := s.backend().ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
 		return nil, data, e
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "service_logs", Description: "App-only private service log read.", Meta: private}, func(ctx context.Context, _ *mcp.CallToolRequest, in serviceTargetInput) (*mcp.CallToolResult, any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		data, e := s.Client.ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
+		data, e := s.backend().ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
 		if e != nil {
 			return nil, nil, e
 		}
@@ -386,7 +500,7 @@ func (s *Server) serviceHTTP(mux *http.ServeMux) {
 		case "list_services":
 			data, e = s.servicesData(ctx, in.BoxID)
 		case "control_service":
-			data, e = s.Client.ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
+			data, e = s.backend().ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
 		case "open_service":
 			data, e = s.openForward(ctx, in)
 			if e == nil {
@@ -400,7 +514,7 @@ func (s *Server) serviceHTTP(mux *http.ServeMux) {
 		case "service_open_browser":
 			data, e = s.openServiceBrowser(in.ForwardID)
 		case "service_logs":
-			data, e = s.Client.ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
+			data, e = s.backend().ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
 		case "service_keepalive":
 			e = s.keepForward(in.ForwardID)
 			data = map[string]any{"renewed": e == nil}

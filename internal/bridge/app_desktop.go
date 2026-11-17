@@ -58,16 +58,6 @@ func desktopResult(data map[string]any) *mcp.CallToolResult {
 }
 func (s *Server) desktopTools(server *mcp.Server) {
 	appOnly := mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}
-	mcp.AddTool(server, &mcp.Tool{Name: "open_box_desktop", Description: "SHOW UI: open the live desktop of an authorized box in the MCP App canvas. May wake the box when its desktop connects. Does not require a terminal session. Pixels, clipboard, and input stay in app-only transport; no screenshots or desktop content are returned to the model.", Meta: mcp.Meta{"ui": map[string]any{"resourceUri": uiResource}}}, func(ctx context.Context, _ *mcp.CallToolRequest, input desktopTarget) (*mcp.CallToolResult, map[string]any, error) {
-		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		info, err := s.Client.Desktop(ctx, input.BoxID, s.managerOptions.Parent)
-		if err != nil {
-			return nil, nil, err
-		}
-		data := map[string]any{"view": "desktop", "boxId": info.BoxID, "project": info.Project}
-		return &mcp.CallToolResult{Meta: mcp.Meta{"connection": data}, Content: []mcp.Content{&mcp.TextContent{Text: "Desktop viewer requested. Desktop content remains outside model context."}}}, data, nil
-	})
 	mcp.AddTool(server, &mcp.Tool{Name: "desktop_open", Description: "App-only VNC connection; returns a private session in _meta, never pixels in model-visible output.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input desktopTarget) (*mcp.CallToolResult, any, error) {
 
 		s.desktopMu.Lock()
@@ -82,7 +72,7 @@ func (s *Server) desktopTools(server *mcp.Server) {
 		stopRequest := context.AfterFunc(ctx, cancel)
 		defer stopRequest()
 		deadline := time.AfterFunc(45*time.Second, cancel)
-		conn, info, err := s.Client.DialDesktop(life, input.BoxID, s.managerOptions.Parent)
+		conn, info, err := s.backend().DialDesktop(life, input.BoxID, s.managerOptions.Parent)
 		deadline.Stop()
 		if err != nil {
 			cancel()
@@ -166,7 +156,7 @@ func (s *Server) boxController(id string) *managerConnection {
 	s.managersMu.Lock()
 	defer s.managersMu.Unlock()
 	if s.managers[id] == nil {
-		s.managers[id] = &managerConnection{}
+		s.managers[id] = newManagerConnection(nil)
 	}
 	return s.managers[id]
 }

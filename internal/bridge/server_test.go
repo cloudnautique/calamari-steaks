@@ -102,6 +102,8 @@ func testServer(t *testing.T, b *fakeBackend) (*Server, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.LegacyTools = true // These tests also cover the legacy aliases.
+	s.BrowserUI = true
 	httpServer.Config.Handler = s.Handler(nil)
 	httpServer.Start()
 	t.Cleanup(httpServer.Close)
@@ -148,7 +150,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 53 {
+	if len(listed.Tools) != 56 { // 43 default tools plus 13 legacy aliases
 		t.Fatalf("tools: %d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
@@ -253,9 +255,9 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	// Cleanup releases the lease after the upstream attach has closed.
 	deadline := time.Now().Add(time.Second)
 	for {
-		s.managers[s.Client.Session.Box].mu.Lock()
-		released := s.managers[s.Client.Session.Box].controller == ""
-		s.managers[s.Client.Session.Box].mu.Unlock()
+		s.managers[s.backend().Session.Box].mu.Lock()
+		released := s.managers[s.backend().Session.Box].controller == ""
+		s.managers[s.backend().Session.Box].mu.Unlock()
 		if released {
 			break
 		}

@@ -118,7 +118,7 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 		}
 		return result
 	}
-	call("open_box_desktop", map[string]any{"boxId": "box"})
+	call("open_box", map[string]any{"boxId": "box", "view": "desktop"})
 	opened := call("desktop_open", map[string]any{"boxId": "box"})
 	private, _ := opened.Meta["desktop"].(map[string]any)
 	id, _ := private["desktopId"].(string)
@@ -155,7 +155,7 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 	}
 	call("desktop_action", map[string]any{"desktopId": id, "action": "claim"})
 	manager := s.boxController("box")
-	if manager.Client != nil {
+	if manager.Client() != nil {
 		t.Fatal("desktop resolved a primary exec")
 	}
 	if manager.writeAs("mcp", func() error { return nil }) == nil {
@@ -170,7 +170,7 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 	}
 	allowExec.Store(true)
 	connected, err := s.manager(ctx, "box")
-	if err != nil || connected != manager || connected.Client.Session.Exec != "e" {
+	if err != nil || connected != manager || connected.Client().Session.Exec != "e" {
 		t.Fatal("terminal connection lost the shared desktop controller", err)
 	}
 	call("desktop_action", map[string]any{"desktopId": id, "action": "close"})

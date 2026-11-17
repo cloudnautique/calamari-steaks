@@ -67,10 +67,9 @@ reusing the same manager/exec.
 - [x] Use Ghostty's web renderer/WASM; do not require a native Ghostty app.
 - [x] Make release builds bundle HTML, CSS, JavaScript, WASM, and dependency
   notices in the Go binary. Users should not install Node, npm, or UI packages.
-- [ ] Remove the build-time dependency on the ignored `discobox/` reference
-  checkout. Currently `scripts/build-ui.mjs` copies
-  `discobox/assets/brand/tokens.css`; package a versioned copy with its license
-  and provenance, or introduce a reproducible dependency source.
+- [x] Remove the build-time dependency on the ignored `discobox/` reference
+  checkout. `scripts/build-ui.mjs` now copies `assets/brand/tokens.css` from
+  the Discobox Go module pinned in `go.mod` (0.12).
 - [ ] Make release builds fail when UI assets are missing. Current Go builds
   permit a tools-only binary and report missing assets when opening the UI.
 - [ ] Test `open_manager` in Codex and Claude for resource rendering, WASM,

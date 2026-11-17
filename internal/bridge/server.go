@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/connection"
@@ -26,9 +28,17 @@ type Server struct {
 	serviceMu        sync.Mutex
 	serviceForwards  map[string]*serviceForward
 	serviceClosed    []forwardInfo
-	Client           *discobox.Client
+	forwardPorts     map[forwardKey]string
+	backendClient    atomic.Pointer[discobox.Client]
+	generationMu     sync.Mutex
 	Onboarding       *connection.Controller
 	Origin           string
+	// LegacyTools serves the manager-named tool aliases and pre-0.12 view
+	// tools for launchers configured against earlier versions.
+	LegacyTools bool
+	// BrowserUI serves the standalone browser workspace and setup page on
+	// the loopback listener. Off by default; MCP App hosts do not need it.
+	BrowserUI        bool
 	token            string
 	allowedOrigins   map[string]bool
 	managersMu       sync.Mutex
@@ -36,11 +46,13 @@ type Server struct {
 	managerOptions   discobox.ManagerOptions
 	appMu            sync.Mutex
 	appTerminals     map[string]*appTerminal
+	evictedTerminals map[string]string
 	desktopMu        sync.Mutex
 	desktops         map[string]*desktopSession
 	desktopOpening   int
 	approvalMu       sync.Mutex
 	approvalReviews  map[string]approvalReview
+	catalog          catalogCache
 	setupMu          sync.Mutex
 	setupTokens      map[string]time.Time
 }
@@ -60,12 +72,17 @@ func New(client *discobox.Client, origin string, extraOrigins []string, accessTo
 	if decoded, err := hex.DecodeString(accessToken); err != nil || len(decoded) != 32 {
 		return nil, errors.New("access token must contain 64 hexadecimal characters")
 	}
-	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
+	s := &Server{Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
+	if client != nil {
+		s.backendClient.Store(client)
+	}
 	s.desktops = make(map[string]*desktopSession)
+	s.evictedTerminals = make(map[string]string)
 	s.serviceForwards = make(map[string]*serviceForward)
+	s.forwardPorts = make(map[forwardKey]string)
 	s.serviceOpenSlots = make(chan struct{}, 8)
 	if client != nil && client.Session.Box != "" {
-		s.managers[client.Session.Box] = &managerConnection{Client: client}
+		s.managers[client.Session.Box] = newManagerConnection(client)
 	}
 	for _, origin := range extraOrigins {
 		if origin != "null" {
@@ -87,8 +104,8 @@ func (s *Server) validToken(token string) bool {
 
 func (s *Server) connection() map[string]any {
 	session := discobox.Session{}
-	if s.Client != nil {
-		session = s.Client.Session
+	if s.backend() != nil {
+		session = s.backend().Session
 	}
 	return map[string]any{"origin": s.Origin, "token": s.token, "session": session}
 }
@@ -99,11 +116,11 @@ func (s *managerConnection) writeAs(owner string, write func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.archived {
-		return errors.New("manager is archived; choose another manager")
+		return errors.New("box is archived; choose another box")
 	}
 	if owner == "mcp" {
 		if s.controller != "" {
-			return errors.New("a person has input focus; wait for them to leave the composer or terminal before sending instructions")
+			return &HumanControlError{Since: s.since}
 		}
 	} else if s.controller != owner {
 		return errors.New("take terminal control before typing")
@@ -117,7 +134,7 @@ func (s *managerConnection) resizeAs(view string, resize func() error) (bool, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.archived {
-		return false, errors.New("manager is archived; choose another manager")
+		return false, errors.New("box is archived; choose another box")
 	}
 	if s.controller != "" && s.controller != view {
 		return false, nil
@@ -132,10 +149,13 @@ func (s *managerConnection) claim(owner string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.archived {
-		return errors.New("manager is archived; choose another manager")
+		return errors.New("box is archived; choose another box")
 	}
 	if s.controller != "" && s.controller != owner {
-		return errors.New("another browser has terminal control")
+		return errors.New("another view of this box has input control; leave it there first")
+	}
+	if s.controller != owner {
+		s.since = time.Now()
 	}
 	s.controller = owner
 	return nil
@@ -149,8 +169,37 @@ func (s *managerConnection) release(owner string) {
 	}
 }
 
+// Handler serves the loopback listener: the Streamable HTTP MCP endpoint
+// when mcpHandler is set, and the standalone browser UI only when
+// BrowserUI is enabled. The MCP App path never needs this listener.
 func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	if s.BrowserUI {
+		s.browserHTTP(mux)
+	}
+	if mcpHandler != nil {
+		mux.Handle("/mcp", s.auth(mcpHandler))
+	}
+	u, _ := url.Parse(s.Origin)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != u.Host {
+			http.Error(w, "unexpected host", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if s.backend() == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/terminal") {
+			http.Error(w, "Connection setup required; open /setup using the private link", 503)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// browserHTTP is the optional standalone browser UI (--browser-ui). It
+// mirrors the app tools over bearer-authenticated loopback HTTP.
+func (s *Server) browserHTTP(mux *http.ServeMux) {
 	s.setupHTTP(mux)
 	s.serviceHTTP(mux)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -189,24 +238,6 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 	mux.Handle("POST /api/files/{action}", s.auth(http.HandlerFunc(s.filesHTTP)))
 	mux.Handle("POST /api/managers/{action}", s.auth(http.HandlerFunc(s.workspaceHTTP)))
 	mux.HandleFunc("GET /terminal", s.terminal)
-	if mcpHandler != nil {
-		mux.Handle("/mcp", s.auth(mcpHandler))
-	}
-	u, _ := url.Parse(s.Origin)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != u.Host {
-			http.Error(w, "unexpected host", http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/terminal") {
-			http.Error(w, "Connection setup required; open /setup using the private link", 503)
-			return
-		}
-		mux.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {
@@ -229,4 +260,42 @@ func trimBearer(header string) string {
 		return ""
 	}
 	return header[len(prefix):]
+}
+
+// HumanControlError tells the assistant that a person is typing in the widget.
+// Nothing was sent. The text names a stable code the model can act on.
+type HumanControlError struct{ Since time.Time }
+
+func (e *HumanControlError) Error() string {
+	return fmt.Sprintf("human_has_control: a person has had input in this box's terminal or desktop since %s. Nothing was sent. Wait (for example with wait_box) or ask them to click back into chat, then read the box again before sending", e.Since.UTC().Format(time.RFC3339))
+}
+
+// backend is the current connection generation's catalog client, or nil
+// before a connection is configured. Views keep the clients they opened with.
+func (s *Server) backend() *discobox.Client { return s.backendClient.Load() }
+
+// UseBackend switches new operations to another connection generation, for
+// example after the person saves a new profile in connection setup. Open
+// terminals, desktops and forwards keep the connection they were opened on
+// until they close; nothing is retargeted.
+func (s *Server) UseBackend(client *discobox.Client) {
+	s.generationMu.Lock()
+	defer s.generationMu.Unlock()
+	s.backendClient.Store(client)
+	s.managersMu.Lock()
+	s.managers = make(map[string]*managerConnection)
+	s.managersMu.Unlock()
+	// Review tokens were issued against the previous connection.
+	s.approvalMu.Lock()
+	clear(s.approvalReviews)
+	s.approvalMu.Unlock()
+	s.catalog.mu.Lock()
+	s.catalog.watchID++
+	s.catalog.backendID++
+	if s.catalog.watchCut != nil {
+		s.catalog.watchCut()
+	}
+	s.catalog.watchCut, s.catalog.watching = nil, false
+	s.catalog.fetched, s.catalog.stale = time.Time{}, true
+	s.catalog.mu.Unlock()
 }

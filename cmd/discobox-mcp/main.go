@@ -37,13 +37,13 @@ func main() {
 func run() error {
 	endpoint := flag.String("discobox", os.Getenv("DISCOBOX_MCP_ENDPOINT"), "Discobox HTTP(S) origin, Unix socket, Windows npipe URL or discobox://<peer-id>")
 	local := flag.Bool("local", false, "Use this sandbox's pool-forwarded Discobox API; requires approved API access")
-	browse := flag.Bool("browse", true, "Start with the manager picker; do not discover or create a manager at startup")
+	browse := flag.Bool("browse", true, "Start with the box catalog and no default box; false with no --box reuses, discovers or creates a persistent manager at startup")
 	identity := flag.String("iroh-identity", "", "Persistent adapter enrollment key (default: user config discobox-mcp/iroh/id_ed25519)")
 	peerID := flag.Bool("peer-id", false, "Initialize/load the adapter identity, print its public peer ID and exit")
 	var relays origins
 	flag.Var(&relays, "iroh-relay", "Custom Iroh relay URL; repeat as needed, and match the server configuration")
 	project := flag.String("project", "default", "Discobox project ID")
-	box := flag.String("box", "", "Existing manager box ID; omitted reuses saved state, discovers a tagged manager, or creates one")
+	box := flag.String("box", "", "Pin one existing box as the default target at startup (implies --browse=false)")
 	exec := flag.String("exec", "primary", "Existing exec ID; primary is resolved and pinned at startup")
 	managerState := flag.String("manager-state", "", "Manager state file when --box is omitted (default: per-endpoint/project file in user config directory)")
 	harness := flag.String("harness", "", "Harness for a new manager (default: project's configured harness)")
@@ -57,15 +57,16 @@ func run() error {
 	flag.Var(&allowed, "ui-origin", "Exact MCP iframe origin allowed to connect to the terminal; repeat as needed")
 	settingsPath := flag.String("connection-config", "", "Private connection profile path (default: user config discobox-mcp/connection.json)")
 	probe := flag.Bool("connection-probe", false, "Internal: bounded connection test using JSON settings on stdin")
+	browserUI := flag.Bool("browser-ui", false, "Also serve the standalone browser workspace and setup page on the loopback listener, with private links printed to stderr")
+	legacyTools := flag.Bool("legacy-manager-tools", false, "Also serve the manager-named tool aliases (open_manager, send_manager, ...) and pre-0.12 view tools; on by default with --box or manager creation options")
 	flag.Parse()
-	browseExplicit := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "browse" {
-			browseExplicit = true
-		}
-	})
-	if !browseExplicit && (*box != "" || *managerState != "" || *harness != "" || *pool != "") {
+	explicit := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if !explicit["browse"] && (*box != "" || *managerState != "" || *harness != "" || *pool != "") {
 		*browse = false
+	}
+	if !explicit["legacy-manager-tools"] && !*browse {
+		*legacyTools = true
 	}
 	token := os.Getenv("DISCOBOX_MCP_TOKEN")
 	// Whether the launcher (flag or DISCOBOX_MCP_ENDPOINT) pinned the endpoint,
@@ -234,13 +235,22 @@ func run() error {
 	defer s.CloseServiceForwards()
 	defer s.CloseFileUploads()
 	s.Onboarding = onboarding
+	if *browse && !managed {
+		// Saved profiles apply in place; launcher-pinned and single-box
+		// sessions still need a restart.
+		onboarding.Apply = applyConnection(s, *identity, cfg, token)
+	}
+	s.LegacyTools = *legacyTools
+	s.BrowserUI = *browserUI
 	// A token supplied by file is already known to its owner. Never echo it:
 	// a declared workspace service's stderr becomes readable service logs.
 	shownToken := s.Token()
 	if *accessTokenFile != "" {
 		shownToken = "<token from --access-token-file>"
 	}
-	log.Printf("Connection setup (private link): %s/setup#token=%s", origin, shownToken)
+	if *browserUI {
+		log.Printf("Connection setup (private link): %s/setup#token=%s", origin, shownToken)
+	}
 	mcpServer := s.MCP()
 	if *requestLog {
 		mcpServer.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -311,7 +321,9 @@ func run() error {
 	} else {
 		log.Print("Connection setup ready; backend operations are disabled until restart with valid settings")
 	}
-	log.Printf("Local terminal (private link): %s/#token=%s", origin, shownToken)
+	if *browserUI {
+		log.Printf("Local browser workspace (private link): %s/#token=%s", origin, shownToken)
+	}
 	if err := web.Ready(); err != nil {
 		log.Printf("Terminal UI not built: %v. MCP read/send/wait remain available.", err)
 	}

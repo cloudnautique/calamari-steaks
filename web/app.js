@@ -26,6 +26,14 @@ let managerCatalog, selectedBoxId, selectedName, activeTab = 'terminal', inboxBu
 let stopped = false, inboxTimer, launchIntent, rendererCleanup;
 let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, focusController, focusTimer, attaching, pendingControl;
 let requestedWidgetHeight;
+// The widget acts only while it can be seen: hidden or scrolled-away
+// instances neither attach (which can wake a box) nor poll.
+// quietReceipts: until the person interacts with this instance, it pushes no
+// model context, so mounting or re-rendering an old widget never overwrites
+// what the assistant knows.
+let widgetVisible = window.parent === window ? !document.hidden : false, hiddenTimer, quietReceipts = window.parent !== window, startingTimer;
+for (const type of ['pointerdown','keydown']) document.addEventListener(type, () => { quietReceipts = false; }, { capture: true });
+const HIDDEN_DETACH_MS = 60000;
 function resizeWidget() {
   if(!app)return;
   const context=app.getHostContext();
@@ -77,8 +85,9 @@ const streamReconnect = new StreamReconnect(() => {
 });
 function handleConnectionFailure(error) {
   if (connected) return;
-  status.textContent = error?.sessionEnded ? 'Session ended' : 'Disconnected';
-  if (!stopped && selectedBoxId && !byId('workspace').hidden && canReconnect(error)) {
+  status.textContent = error?.evicted ? 'Paused' : error?.sessionEnded ? 'Session ended' : 'Disconnected';
+  if (error?.sessionEnded || error?.sessionChanged) refreshOnAttach = true;
+  if (!stopped && widgetVisible && selectedBoxId && !byId('workspace').hidden && canReconnect(error)) {
     status.textContent = 'Reconnecting…';
     streamReconnect.request();
   }
@@ -89,9 +98,20 @@ function liveConnected() {
   scheduleFit();
   if (inputFocused()) focusController?.focus(true).catch(report);
 }
-function assertSameSession(session) {
+let refreshOnAttach = false;
+function assertSameSession(session, adopted) {
+  if (adopted && session?.box === connection.session.box) {
+    // An explicit reconnect re-resolved the box's current session.
+    if (session.exec !== connection.session.exec) {
+      connection = { ...connection, session };
+      byId('session').textContent = `${session.project} / ${session.box} / ${session.exec}`;
+      byId('hint').textContent = 'Connected to this box’s new terminal session. Nothing typed earlier was replayed.';
+      shareWidgetAction('session_changed', { boxId: session.box });
+    }
+    return;
+  }
   if (session?.box !== connection.session.box || session?.exec !== connection.session.exec) {
-    const error = new Error('This box’s terminal session changed. Reopen the box to connect to its new session. No input was replayed.');
+    const error = new Error('This box’s terminal session changed. Choose Reconnect to connect to its new session. No input was replayed.');
     error.sessionChanged = true; throw error;
   }
 }
@@ -100,7 +120,9 @@ const contextSync = new ContextSync(
   message => { byId('context-status').textContent = message; }
 );
 function shareWidgetAction(action, details = {}) {
-  if (!app || !hostReady || stopped) return;
+  // Receipts describe what the person did. Views the assistant opened, or
+  // instances re-rendered by the host, do not overwrite the shared context.
+  if (!app || !hostReady || stopped || quietReceipts) return;
   contextSync.update({ activeBoxId:selectedBoxId || null, activeView:byId('manager-browser').hidden ? activeTab : 'catalog', humanHasTerminalControl:owned, humanHasDesktopControl:desktopView.hasControl },action,details);
 }
 function catalogBoxes(data) { return data?.boxes || data?.managers || []; }
@@ -255,8 +277,12 @@ function encodeBytes(bytes) {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
+// Server-side bounds: launch ≤50 s, terminal attach ≤45 s, reads ≤12 s.
+// Give those calls a little more than the SDK's 60 s default only where the
+// server needs it, so the host never gives up before the server answers.
+const callTimeouts = { launch_box: 70000, terminal_open: 70000, open_box: 40000 };
 async function appCall(name, args) {
-  const result = await app.callServerTool({ name, arguments: args });
+  const result = await app.callServerTool({ name, arguments: args }, callTimeouts[name] ? { timeout: callTimeouts[name] } : undefined);
   if (result.isError) throw new Error(result.content?.find((item) => item.type === 'text')?.text || `${name} failed`);
   // Terminal handles and bytes arrive only in private _meta (never model context).
   return result._meta?.terminal || result.structuredContent || JSON.parse(result.content.find((item) => item.type === 'text').text);
@@ -287,12 +313,14 @@ async function attachApp() {
     reconnect.disabled = true;
     control.disabled = true;
     status.textContent = 'Attaching / waking…';
-    const opened = await appCall('terminal_open', { managerId: connection.session.box });
+    const refresh = refreshOnAttach;
+    const opened = await appCall('terminal_open', { managerId: connection.session.box, refresh });
     if (current !== generation) {
       await appCall('terminal_action', { terminalId: opened.terminalId, action: 'close' });
       return;
     }
-    try { assertSameSession(opened.session); }
+    refreshOnAttach = false;
+    try { assertSameSession(opened.session, refresh); }
     catch (error) { await appCall('terminal_action',{terminalId:opened.terminalId,action:'close'}); throw error; }
     appTerminal = opened.terminalId;
     inputQueue = Promise.resolve();
@@ -309,7 +337,12 @@ async function attachApp() {
       if (current !== generation) return;
       for (const chunk of output.chunks) terminal.write(Uint8Array.from(atob(chunk), (character) => character.charCodeAt(0)));
       cursor = output.cursor;
-      if (output.closed) { const error = new Error('The terminal stream ended. Reopen the box if its session is still available.'); error.sessionEnded = !!output.ended; throw error; }
+      if (output.closed) {
+        const error = output.evicted === 'superseded' ? new Error('This box is open in a newer view, which took over its terminal. Choose Reconnect to continue here.')
+          : output.evicted ? new Error('This view was paused to make room for another terminal. Choose Reconnect to continue here.')
+          : new Error('The terminal session ended. Choose Reconnect to connect to the box’s current session, if it has one.');
+        error.sessionEnded = !!output.ended; error.evicted = output.evicted || undefined; throw error;
+      }
     }
     })().catch(error => { if (current === generation) disconnectApp(error); });
   } catch (error) {
@@ -344,7 +377,7 @@ async function initializeRenderer() {
   terminal.onResize(updateTerminalSize);
   const observer = new ResizeObserver(scheduleFit);
   observer.observe(byId('viewport'));
-  const clipboardCleanup=installTerminalClipboard(byId('terminal'),terminal,report);
+  const clipboardCleanup=installTerminalClipboard(byId('terminal'),terminal,report,()=>({plainCtrlV:ctrlVPastes()}));
   const linksCleanup=installTerminalLinks(byId('terminal'),terminal,openExternal,report);
   rendererCleanup = () => { clipboardCleanup();linksCleanup();observer.disconnect(); terminal.dispose(); };
 }
@@ -408,15 +441,18 @@ async function workspaceCall(name, args = {}) {
     const result = await response.json(); if(!response.ok) throw new Error(result.error || 'File request failed'); return result;
   }
   const action = { list_managers: 'list', list_boxes: 'boxes', launch_box: 'launch', list_attention: 'attention', inspect_box: 'inspect', send_box:'message', send_manager: 'message', open_box:'connect', connect_manager: 'connect', create_manager: 'create', archive_box:'archive', archive_manager: 'archive' }[name];
-  if (!action) throw new Error('Unknown workspace operation');
+  if (!action) throw new Error('This action is available in the chat app widget only.');
   const response = await fetch(`/api/managers/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Manager operation failed');
   return result;
 }
-async function refreshManagers() {
-  const data = await workspaceCall('list_boxes');
-  showManagers(data);
+async function readCatalog(fresh = false) {
+  // The adapter keeps one catalog for every view; this reads its cache.
+  return app ? appCall('catalog_read', { fresh }) : workspaceCall('list_boxes');
+}
+async function refreshManagers(fresh = true) {
+  showManagers(await readCatalog(fresh));
 }
 function showManagers(data) {
   if (owned) { report('Release control before browsing managers.'); return; }
@@ -450,16 +486,49 @@ function showManagers(data) {
     open.onclick = async () => { open.disabled = true; try { await yieldInput(); await start({ ...await workspaceCall('open_box', { boxId: manager.id }), view: 'workspace' }); } catch (error) { report(error); open.disabled = false; } };
     actions.append(open);
     if (manager.accessible && !manager.archived) {
-      const archive = document.createElement('button'); archive.textContent = 'Archive';
-      archive.onclick = async () => {
-        if (archive.dataset.confirm !== 'yes') { archive.dataset.confirm = 'yes'; archive.textContent = 'Confirm archive'; return; }
-        archive.disabled = true;
-        try { await workspaceCall('archive_box', { boxId: manager.id }); shareWidgetAction('archive_requested',{ boxId:manager.id }); await refreshManagers(); } catch (error) { report(error); archive.disabled = false; }
-      };
-      actions.append(archive);
+      actions.append(confirmButton('Archive', 'Confirm archive', async () => {
+        await workspaceCall('archive_box', { boxId: manager.id }); shareWidgetAction('archive_requested',{ boxId:manager.id }); await refreshManagers();
+      }));
+      if (app) {
+        const power = document.createElement('details'); power.className = 'box-power';
+        const summary = document.createElement('summary'); summary.textContent = 'Power';
+        const row = document.createElement('div'); row.className = 'actions';
+        for (const [action, label] of [['start','Start'],['stop','Stop'],['restart','Restart']]) {
+          const run = async () => { await workspaceCall('control_box', { boxId: manager.id, action }); shareWidgetAction('box_power_requested',{ boxId:manager.id, action }); await refreshManagers(); };
+          row.append(action === 'start' ? actionButton(label, run) : confirmButton(label, `Confirm ${action}`, run));
+        }
+        power.append(summary, row); actions.append(power);
+      }
+    }
+    if (manager.accessible && manager.archived && app) {
+      actions.append(actionButton('Restore', async () => {
+        await workspaceCall('control_box', { boxId: manager.id, action: 'restore' }); shareWidgetAction('restore_requested',{ boxId:manager.id }); await refreshManagers();
+      }));
     }
     card.append(details, actions); list.append(card);
   }
+}
+// Destructive actions need a second click within a few seconds; the
+// confirmation resets on its own so a stale "Confirm" is never left armed.
+function confirmButton(label, confirmLabel, run) {
+  const button = document.createElement('button'); button.textContent = label;
+  let timer;
+  button.onclick = async () => {
+    if (button.dataset.confirm !== 'yes') {
+      button.dataset.confirm = 'yes'; button.textContent = confirmLabel;
+      timer = setTimeout(() => { delete button.dataset.confirm; button.textContent = label; }, 5000);
+      return;
+    }
+    clearTimeout(timer); delete button.dataset.confirm; button.textContent = label;
+    button.disabled = true;
+    try { await run(); } catch (error) { report(error); } finally { button.disabled = false; }
+  };
+  return button;
+}
+function actionButton(label, run) {
+  const button = document.createElement('button'); button.textContent = label;
+  button.onclick = async () => { button.disabled = true; try { await run(); } catch (error) { report(error); } finally { button.disabled = false; } };
+  return button;
 }
 byId('browse').onclick = () => yieldInput().then(refreshManagers).catch(report);
 byId('show-archived').onchange = () => { if (managerCatalog) showManagers(managerCatalog); };
@@ -489,7 +558,7 @@ byId('create-button').onclick = async (event) => {
   name.value = ''; task.value = '';
   // Once creation is confirmed, a catalog or view failure must not turn the
   // launch button into a retry of another creation.
-  try { managerCatalog = await workspaceCall('list_boxes'); } catch (error) { report(error); }
+  try { managerCatalog = await readCatalog(true); } catch (error) { report(error); }
   try { await start({ ...created, view: 'workspace' }); } catch (error) { report(error); }
   refreshInbox();
 };
@@ -503,7 +572,7 @@ byId('discard-creation').onclick = () => { if (!byId('create-button').disabled) 
 byId('manager-name').onkeydown = (event) => {
   if (event.key === 'Enter') { event.preventDefault(); if (!byId('create-button').disabled) byId('create-button').click(); }
 };
-reconnect.addEventListener('click', () => ensureAttached().catch(report));
+reconnect.addEventListener('click', () => { refreshOnAttach = true; ensureAttached().catch(report); });
 share.addEventListener('click', async () => {
   share.disabled = true;
   try {
@@ -521,7 +590,7 @@ share.addEventListener('click', async () => {
 
 try {
   if (window.parent !== window) {
-    app = new App({ name: 'Discobox workspace', version: '0.11.0' }, {tools:{}}, { autoResize: false });
+    app = new App({ name: 'Discobox workspace', version: '0.12.0' }, {tools:{}}, { autoResize: false });
     app.onlisttools=async()=>({tools:[viewTool]});
     app.oncalltool=async({name,arguments:args})=>{
       try{
@@ -532,21 +601,28 @@ try {
       }catch(error){return {isError:true,content:[{type:'text',text:error.message}]}}
     };
     app.onhostcontextchanged=resizeWidget;
+    watchVisibility();
     app.ontoolresult = (result) => {
       const value = result._meta?.connection || result.structuredContent;
       if((value?.session||value?.view)&&humanUsingWidget()){
         shareWidgetAction('view_selection_blocked',{boxId:value.boxId,view:value.view});
         report(new Error('View selection paused while you are using this widget. Leave the input before asking chat to switch views.'));return;
       }
-      if (value?.session || value?.view) start(value).catch(report);
+      if (value?.session || value?.view) {
+        // The assistant opened this view; it already knows. Only what the
+        // person does here becomes a context receipt.
+        quietReceipts = true;
+        start(value).catch(report);
+      }
     };
     app.onteardown = async () => { cleanupWorkspace(); return {}; };
     await app.connect(undefined, { timeout: 15000 });
-    hostReady = true; shareWidgetAction('workspace_ready');
+    hostReady = true;
     share.hidden = activeTab !== 'terminal';
     resizeWidget();
     await refreshInbox();
   } else {
+    watchVisibility();
     const token = new URLSearchParams(location.hash.slice(1)).get('token');
     history.replaceState(null, '', location.pathname);
     if (!token) throw new Error('Open the private terminal link printed by the MCP server.');
@@ -558,6 +634,31 @@ try {
   }
 } catch (error) { status.textContent = 'Unavailable'; report(error); }
 
+function watchVisibility() {
+  const update = (visible) => {
+    if (visible === widgetVisible) return;
+    widgetVisible = visible;
+    clearTimeout(hiddenTimer);
+    if (visible) {
+      if (!app || hostReady) refreshInbox();
+      if (selectedBoxId && !byId('workspace').hidden && activeTab === 'terminal' && !connected) ensureAttached().catch(handleConnectionFailure);
+    } else {
+      clearTimeout(inboxTimer);
+      // Off screen for a while: let go of the live stream so the box can
+      // sleep and other views can use the slot. Never while a person types.
+      hiddenTimer = setTimeout(() => {
+        if (!widgetVisible && !owned && connected && !desktopView.hasControl) {
+          detach(); status.textContent = 'Paused while hidden'; reconnect.disabled = false;
+        }
+      }, HIDDEN_DETACH_MS);
+    }
+  };
+  if ('IntersectionObserver' in window) {
+    let intersecting = true;
+    new IntersectionObserver(entries => { intersecting = entries.some(entry => entry.isIntersecting); update(intersecting && !document.hidden); }).observe(document.querySelector('main'));
+    document.addEventListener('visibilitychange', () => update(intersecting && !document.hidden));
+  } else document.addEventListener('visibilitychange', () => update(!document.hidden));
+}
 function describeBox(box) {
   const labels = { blocked: 'Needs you', working: 'Working', done: 'Ready for review', idle: 'Waiting for a task', error: 'Agent error' };
   const parts = [box.state, box.harness || 'Project harness'];
@@ -568,10 +669,10 @@ function describeBox(box) {
   return parts.join(' · ');
 }
 async function refreshInbox() {
-  if (inboxBusy || stopped) return;
+  if (inboxBusy || stopped || !widgetVisible) return;
   clearTimeout(inboxTimer); inboxBusy = true;
   try {
-    const { inbox } = await workspaceCall('list_attention');
+    const { inbox } = app ? await readCatalog() : await workspaceCall('list_attention');
     if (inbox.boxes) {
       managerCatalog = { ...managerCatalog,boxes:inbox.boxes };
       if (selectedBoxId) {
@@ -612,10 +713,15 @@ async function refreshInbox() {
     byId('inbox-coverage').textContent = `Inbox refresh failed: ${error.message}. Existing items may be stale. Check the Discobox console.`;
   } finally {
     inboxBusy = false;
-    if (!stopped) inboxTimer = setTimeout(refreshInbox,15000);
+    if (!stopped && widgetVisible) inboxTimer = setTimeout(refreshInbox,15000);
   }
 }
 byId('fit-terminal').onclick = fitTerminal;
+// Per-viewer preference: whether a bare Ctrl+V pastes (default) or reaches
+// the program. Macs paste with Cmd+V either way.
+function ctrlVPastes() { try { return localStorage.getItem('discobox.ctrlVPastes') !== 'false'; } catch { return true; } }
+byId('ctrl-v-pastes').checked = ctrlVPastes();
+byId('ctrl-v-pastes').onchange = event => { try { localStorage.setItem('discobox.ctrlVPastes', String(event.target.checked)); } catch {} };
 byId('inbox-button').onclick = () => { byId('inbox').hidden = !byId('inbox').hidden; if (!byId('inbox').hidden) refreshInbox(); };
 byId('close-inbox').onclick = () => { byId('inbox').hidden = true; approvalsView.close(); };
 byId('refresh-inbox').onclick = () => approvalsView.active?approvalsView.refresh():refreshInbox();
@@ -703,16 +809,32 @@ async function selectWorkspaceTab(tab,filePath) {
     if (!connected) status.textContent = 'Files';
     await filesView.open(id,filePath);
   } else {
-    if (!connection.session?.exec) {
-      const value = await workspaceCall('open_box',{boxId:id});
-      if (id !== selectedBoxId || activeTab !== 'terminal') return;
-      connection={...connection,...value};
-      byId('session').textContent = `${connection.session.project} / ${id} / ${connection.session.exec}`;
-    }
+    if (!connection.session?.exec && !await awaitSession(id)) return;
     if (id !== selectedBoxId || activeTab !== 'terminal') return;
+    if (!widgetVisible) { status.textContent = 'Paused while hidden'; reconnect.disabled = false; return; }
     await ensureAttached(); fitTerminal();
   }
   if(id===selectedBoxId&&activeTab===tab)shareWidgetAction('view_selected',{boxId:id,view:tab});
+}
+// A box that is still provisioning has no terminal session yet. Ask again
+// every few seconds while this view is visible; never create anything.
+async function awaitSession(id) {
+  clearTimeout(startingTimer);
+  const deadline = Date.now() + 5 * 60000;
+  while (id === selectedBoxId && activeTab === 'terminal' && !stopped) {
+    const value = await workspaceCall('open_box', { boxId: id });
+    if (id !== selectedBoxId || activeTab !== 'terminal') return false;
+    connection = { ...connection, ...value };
+    if (connection.session?.exec) {
+      byId('session').textContent = `${connection.session.project} / ${id} / ${connection.session.exec}`;
+      return true;
+    }
+    status.textContent = 'Box starting…';
+    byId('hint').textContent = 'This box is still starting. The terminal connects when its session appears; Files and Desktop may already work.';
+    if (Date.now() > deadline) { report(new Error('The box has not started a terminal session after 5 minutes. Check it in the Discobox console; nothing was created again.')); return false; }
+    await new Promise(resolve => { startingTimer = setTimeout(resolve, widgetVisible ? 4000 : 15000); });
+  }
+  return false;
 }
 async function openFileWorkspace(value) {
   const desktop=value.view==='desktop',services=value.view==='services';

@@ -41,6 +41,8 @@ func TestFileToolsAndResourceShareTheSameAuthorizedContent(t *testing.T) {
 	defer backend.Close()
 	catalog, _ := discobox.NewCatalog(backend.URL, "", "p")
 	server, err := New(catalog, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{Parent: "caller"})
+	server.LegacyTools = true
+	server.BrowserUI = true
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +99,7 @@ func TestFileToolsAndResourceShareTheSameAuthorizedContent(t *testing.T) {
 		t.Fatalf("empty resource lacks protocol content field: %s", encodedEmpty)
 	}
 	templates, err := client.ListResourceTemplates(ctx, nil)
-	if err != nil || len(templates.ResourceTemplates) != 1 {
+	if err != nil || len(templates.ResourceTemplates) != 2 || templates.ResourceTemplates[0].URITemplate != "discobox-file://{project}/{boxId}/{+path}" && templates.ResourceTemplates[1].URITemplate != "discobox-file://{project}/{boxId}/{+path}" {
 		t.Fatalf("file template unavailable: %v %v", templates, err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/api/files/read", strings.NewReader(`{"boxId":"box","path":"/workspace/report.md"}`))

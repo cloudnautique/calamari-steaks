@@ -9,5 +9,6 @@ export class StreamReconnect {
   cancel() { if(this.timer!==undefined)this.cancelTimer(this.timer);this.timer=undefined;this.attempt=0; }
 }
 export function canReconnect(error) {
+ if(error?.evicted)return false;
  return !error?.sessionEnded && !error?.sessionChanged && !/HTTP (401|403)|is archived|adoption approval/i.test(error?.message||'');
 }

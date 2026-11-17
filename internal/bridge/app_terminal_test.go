@@ -35,7 +35,8 @@ func TestAppTerminalUsesMCPForReplayAndOwnership(t *testing.T) {
 	first := call("terminal_read", map[string]any{"terminalId": id, "after": 0}, false)
 	// Regression for SECURITY-REVIEW.md H3: the view handle is an input
 	// capability and the bytes are private; neither may reach model context.
-	for _, name := range []string{"terminal_open", "terminal_read"} {
+	// Read first: a second terminal_open of the same box supersedes the view.
+	for _, name := range []string{"terminal_read", "terminal_open"} {
 		args := map[string]any{"terminalId": id, "after": 0}
 		if name == "terminal_open" {
 			args = map[string]any{}

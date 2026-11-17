@@ -1,6 +1,24 @@
 import { mkdir, copyFile, readFile, writeFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+
+async function brandTokens() {
+  if (process.env.DISCOBOX_BRAND_TOKENS) return process.env.DISCOBOX_BRAND_TOKENS;
+  const checkout = fileURLToPath(new URL('discobox/assets/brand/tokens.css', root));
+  if (existsSync(checkout)) return checkout;
+  let moduleDir;
+  try {
+    execFileSync('go', ['mod', 'download', 'github.com/discobox-ai/discobox'], { cwd: fileURLToPath(root), stdio: 'ignore' });
+    moduleDir = execFileSync('go', ['list', '-m', '-f', '{{.Dir}}', 'github.com/discobox-ai/discobox'], { cwd: fileURLToPath(root), encoding: 'utf8' }).trim();
+  } catch (error) {
+    throw new Error(`Could not locate the pinned Discobox Go module for brand tokens (is Go installed?): ${error.message}`);
+  }
+  const tokens = `${moduleDir}/assets/brand/tokens.css`;
+  if (!existsSync(tokens)) throw new Error(`Brand tokens missing from ${moduleDir}`);
+  return tokens;
+}
 
 const root = new URL('../', import.meta.url);
 const destination = new URL('web/vendor/', root);
@@ -19,8 +37,12 @@ for (const [source, name] of [
 ]) {
   await copyFile(new URL(`node_modules/${source}`, root), new URL(name, destination));
 }
-// Brand values stay owned by the reference checkout, never duplicated in app CSS.
-await copyFile(new URL('discobox/assets/brand/tokens.css', root), new URL('tokens.css', destination));
+// Brand values stay owned by Discobox, never duplicated in app CSS. They come
+// from the Go module this adapter pins, so no separate checkout is needed;
+// DISCOBOX_BRAND_TOKENS or a ./discobox checkout overrides it.
+// Copy the bytes, not the file: the Go module cache is read-only, and a
+// copied mode would block the next build from overwriting it.
+await writeFile(new URL('tokens.css', destination), await readFile(await brandTokens()));
 const notices = [];
 const dependencies = new Set(['ghostty-web', '@modelcontextprotocol/ext-apps']);
 for (const path of Object.keys(bundled.metafile.inputs)) {
