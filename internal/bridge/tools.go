@@ -95,7 +95,7 @@ func (s *Server) legacyManagerTools(server *mcp.Server) {
 		if err := web.Ready(); err != nil {
 			return nil, nil, err
 		}
-		if input.ManagerID == "" && s.Client.Session.Box == "" {
+		if input.ManagerID == "" && s.backend().Session.Box == "" {
 			data, err := s.listBoxes(ctx)
 			if err != nil {
 				return nil, nil, err

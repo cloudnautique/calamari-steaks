@@ -27,6 +27,7 @@ type uploadInput struct {
 	Data     string `json:"data,omitempty"`
 }
 type fileUpload struct {
+	client       *discobox.Client // the connection generation the upload began on
 	mu           sync.Mutex
 	file         *os.File
 	box, path    string
@@ -60,10 +61,10 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 		if in.Size < 0 || in.Size > maxUploadSize {
 			return nil, errors.New("upload limit is 16 MiB per file")
 		}
-		if _, err := discobox.FileURI(s.Client.Session.Project, in.BoxID, in.Path); err != nil {
+		if _, err := discobox.FileURI(s.backend().Session.Project, in.BoxID, in.Path); err != nil {
 			return nil, err
 		}
-		if err := s.Client.BoxAccess(ctx, in.BoxID, s.managerOptions.Parent); err != nil {
+		if err := s.backend().BoxAccess(ctx, in.BoxID, s.managerOptions.Parent); err != nil {
 			return nil, err
 		}
 		s.uploadMu.Lock()
@@ -80,7 +81,7 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 			return nil, errors.New("could not stage a private upload")
 		}
 		id := hex.EncodeToString(key[:])
-		u := &fileUpload{file: f, box: in.BoxID, path: in.Path, size: in.Size}
+		u := &fileUpload{client: s.backend(), file: f, box: in.BoxID, path: in.Path, size: in.Size}
 		if s.uploads == nil {
 			s.uploads = make(map[string]*fileUpload)
 		}
@@ -141,7 +142,7 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 	if err == nil {
 		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		info, e := s.Client.WriteFile(ctx, u.box, s.managerOptions.Parent, u.path, u.file, u.size)
+		info, e := u.client.WriteFile(ctx, u.box, s.managerOptions.Parent, u.path, u.file, u.size)
 		err = e
 		u.mu.Unlock()
 		s.uploadMu.Lock()

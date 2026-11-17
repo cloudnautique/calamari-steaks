@@ -222,10 +222,10 @@ func TestPrivateServiceLogsAndExplicitLifecycle(t *testing.T) {
 	if e != nil || public.IsError {
 		t.Fatal(e, public)
 	}
-	if _, e = s.Client.ControlService(ctx, "box", "", "../other", "start"); e == nil {
+	if _, e = s.backend().ControlService(ctx, "box", "", "../other", "start"); e == nil {
 		t.Fatal("accepted path traversal")
 	}
-	if _, e = s.Client.ControlService(ctx, "box", "", "web.app", "start"); e != nil {
+	if _, e = s.backend().ControlService(ctx, "box", "", "web.app", "start"); e != nil {
 		t.Fatal(e)
 	}
 	if mutations.Load() != 1 {

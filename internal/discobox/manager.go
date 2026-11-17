@@ -69,33 +69,47 @@ func DefaultManagerState(endpoint, project string) (string, error) {
 // EnsureManager uses saved state, then discovers a tagged manager, then creates
 // one. Call with a deadline. An unavailable saved box or uncertain create stops
 // startup rather than silently replacing the manager.
-func EnsureManager(ctx context.Context, endpoint, token, project string, options ManagerOptions) (*Client, error) {
+func validateManagerOptions(project string, options ManagerOptions) error {
 	if !identifier.MatchString(project) {
-		return nil, errors.New("invalid project ID")
+		return errors.New("invalid project ID")
 	}
 	if options.Parent != "" && !identifier.MatchString(options.Parent) {
-		return nil, errors.New("invalid manager parent ID")
+		return errors.New("invalid manager parent ID")
 	}
 	if options.StatePath == "" {
-		return nil, errors.New("manager state path is required")
+		return errors.New("manager state path is required")
 	}
 	if options.Name != "" && (!identifier.MatchString(options.Name) || len(options.Name) > 64) {
-		return nil, errors.New("manager name must contain 1 to 64 letters, digits, underscores or hyphens")
+		return errors.New("manager name must contain 1 to 64 letters, digits, underscores or hyphens")
 	}
 	if options.Role != "" && options.Role != "box" {
-		return nil, errors.New("invalid launch role")
+		return errors.New("invalid launch role")
 	}
 	if len(options.Task) > 64<<10 || !utf8.ValidString(options.Task) || (options.Role == "box" && strings.TrimSpace(options.Task) == "") {
-		return nil, errors.New("task must contain 1 to 65536 bytes of valid text")
+		return errors.New("task must contain 1 to 65536 bytes of valid text")
 	}
 	if len(options.Model) > 128 {
-		return nil, errors.New("model must be at most 128 bytes")
+		return errors.New("model must be at most 128 bytes")
+	}
+	return nil
+}
+
+func EnsureManager(ctx context.Context, endpoint, token, project string, options ManagerOptions) (*Client, error) {
+	if err := validateManagerOptions(project, options); err != nil {
+		return nil, err
 	}
 	c, err := newClient(endpoint, token, Session{Project: project, Exec: "primary"})
 	if err != nil {
 		return nil, err
 	}
-	endpoint = strings.TrimRight(endpoint, "/")
+	return ensureManager(ctx, c, options)
+}
+
+// ensureManager runs EnsureManager on an existing connection, so a box is
+// created over the same transport (and connection generation) as the caller.
+func ensureManager(ctx context.Context, c *Client, options ManagerOptions) (*Client, error) {
+	endpoint, project := strings.TrimRight(c.endpoint, "/"), c.Session.Project
+	var err error
 	progress := func(message string) {
 		if options.Progress != nil {
 			options.Progress(message)

@@ -204,3 +204,29 @@ func TestTerminalViewsAreLeasedPerBoxAndEvictedByAge(t *testing.T) {
 		}
 	}
 }
+
+func TestNewConnectionGenerationLeavesOpenViewsAlone(t *testing.T) {
+	s, client, b, ctx := newLifecycleFixture(t)
+	b.primary["box"] = "e1"
+	view, text := callTool(t, ctx, client, "terminal_open", map[string]any{"managerId": "box"})
+	if view.IsError {
+		t.Fatal(text)
+	}
+	id := structured(t, view)["terminalId"].(string)
+	other, _, b2, _ := newLifecycleFixture(t)
+	b2.primary["box"] = "e9"
+	s.UseBackend(other.backend())
+	// New operations use the new connection...
+	opened, _ := callTool(t, ctx, client, "open_box", map[string]any{"boxId": "box"})
+	if exec := structured(t, opened)["session"].(map[string]any)["exec"]; exec != "e9" {
+		t.Fatalf("new generation not used: %v", exec)
+	}
+	// ...while the open view keeps its stream and input path.
+	callTool(t, ctx, client, "terminal_action", map[string]any{"terminalId": id, "action": "claim"})
+	if result, text := callTool(t, ctx, client, "terminal_action", map[string]any{"terminalId": id, "action": "message", "text": "still here"}); result.IsError {
+		t.Fatal(text)
+	}
+	if b.inputs["e1"] != 1 || b2.inputs["e9"] != 0 {
+		t.Fatalf("input moved to the new connection: %v %v", b.inputs, b2.inputs)
+	}
+}

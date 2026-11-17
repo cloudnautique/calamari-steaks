@@ -71,7 +71,7 @@ func (s *Server) desktopTools(server *mcp.Server) {
 		stopRequest := context.AfterFunc(ctx, cancel)
 		defer stopRequest()
 		deadline := time.AfterFunc(45*time.Second, cancel)
-		conn, info, err := s.Client.DialDesktop(life, input.BoxID, s.managerOptions.Parent)
+		conn, info, err := s.backend().DialDesktop(life, input.BoxID, s.managerOptions.Parent)
 		deadline.Stop()
 		if err != nil {
 			cancel()

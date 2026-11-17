@@ -242,9 +242,9 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	// Cleanup releases the lease after the upstream attach has closed.
 	deadline := time.Now().Add(time.Second)
 	for {
-		s.managers[s.Client.Session.Box].mu.Lock()
-		released := s.managers[s.Client.Session.Box].controller == ""
-		s.managers[s.Client.Session.Box].mu.Unlock()
+		s.managers[s.backend().Session.Box].mu.Lock()
+		released := s.managers[s.backend().Session.Box].controller == ""
+		s.managers[s.backend().Session.Box].mu.Unlock()
 		if released {
 			break
 		}

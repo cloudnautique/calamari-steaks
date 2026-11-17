@@ -54,8 +54,8 @@ const launchTimeout = 50 * time.Second
 const launchPrimaryWait = 20 * time.Second
 
 func (s *Server) defaultBox(id string) (string, error) {
-	if id == "" && s.Client != nil {
-		id = s.Client.Session.Box
+	if id == "" && s.backend() != nil {
+		id = s.backend().Session.Box
 	}
 	if id == "" {
 		return "", errors.New("choose a box with list_boxes and pass its box ID")
@@ -75,7 +75,7 @@ func (s *Server) manager(ctx context.Context, id string) (*managerConnection, er
 	if existing != nil && existing.Client() != nil {
 		return existing, nil
 	}
-	client, err := s.Client.ConnectManager(ctx, id, s.managerOptions.Parent)
+	client, err := s.backend().ConnectManager(ctx, id, s.managerOptions.Parent)
 	if err != nil {
 		return nil, err
 	}
@@ -103,12 +103,12 @@ func (s *Server) reopen(ctx context.Context, id string) (*managerConnection, map
 	if err != nil {
 		return nil, nil, err
 	}
-	if id == s.Client.Session.Box && s.Client.Session.Exec != "" {
+	if id == s.backend().Session.Box && s.backend().Session.Exec != "" {
 		// A session pinned on the command line stays pinned.
 		manager, err := s.manager(ctx, id)
 		return manager, map[string]any{"terminal": "ready"}, err
 	}
-	fresh, err := s.Client.ConnectManager(ctx, id, s.managerOptions.Parent)
+	fresh, err := s.backend().ConnectManager(ctx, id, s.managerOptions.Parent)
 	if errors.Is(err, discobox.ErrNoPrimary) {
 		return nil, map[string]any{"terminal": "starting", "message": "The box has no terminal session yet; it may still be starting. Files and Desktop are available. The widget connects when the session appears; from text, call open_box again shortly."}, nil
 	}
@@ -133,8 +133,8 @@ func (s *Server) reopen(ctx context.Context, id string) (*managerConnection, map
 }
 
 func (s *Server) listManagers(ctx context.Context) (map[string]any, error) {
-	managers, err := s.Client.ListManagers(ctx, s.managerOptions.Parent)
-	return map[string]any{"view": "managers", "managers": managers, "project": s.Client.Session.Project}, err
+	managers, err := s.backend().ListManagers(ctx, s.managerOptions.Parent)
+	return map[string]any{"view": "managers", "managers": managers, "project": s.backend().Session.Project}, err
 }
 func (s *Server) connectManager(ctx context.Context, id string) (map[string]any, error) {
 	id, err := s.defaultBox(id)
@@ -145,7 +145,7 @@ func (s *Server) connectManager(ctx context.Context, id string) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	session := discobox.Session{Project: s.Client.Session.Project, Box: id}
+	session := discobox.Session{Project: s.backend().Session.Project, Box: id}
 	if manager != nil {
 		session = manager.Client().Session
 	}
@@ -171,7 +171,7 @@ func (s *Server) launch(ctx context.Context, input createInput, role string) (ma
 	if input.Pool != "" {
 		options.Pool = input.Pool
 	}
-	client, err := s.Client.CreateManager(ctx, input.RequestID, options)
+	client, err := s.backend().CreateManager(ctx, input.RequestID, options)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func (s *Server) archiveManager(ctx context.Context, id string) (map[string]any,
 			return nil, errors.New("release human terminal control before archiving this manager")
 		}
 	}
-	if err := s.Client.ArchiveManager(ctx, id, s.managerOptions.Parent); err != nil {
+	if err := s.backend().ArchiveManager(ctx, id, s.managerOptions.Parent); err != nil {
 		return nil, err
 	}
 	if manager != nil {
@@ -387,7 +387,7 @@ func widgetBoxes(boxes []discobox.Manager) []discobox.Manager {
 // listBoxes is the widget's full catalog.
 func (s *Server) listBoxes(ctx context.Context) (map[string]any, error) {
 	inbox, err := s.snapshot(ctx, 2*time.Second)
-	return map[string]any{"view": "boxes", "boxes": widgetBoxes(inbox.Boxes), "project": s.Client.Session.Project}, err
+	return map[string]any{"view": "boxes", "boxes": widgetBoxes(inbox.Boxes), "project": s.backend().Session.Project}, err
 }
 func (s *Server) attention(ctx context.Context) (map[string]any, error) {
 	inbox, err := s.snapshot(ctx, 2*time.Second)
@@ -429,9 +429,9 @@ func (s *Server) boxTools(server *mcp.Server) {
 		if err != nil {
 			return nil, nil, err
 		}
-		page["project"] = s.Client.Session.Project
+		page["project"] = s.backend().Session.Project
 		boxes := page["boxes"].([]boxSummary)
-		text := fmt.Sprintf("%d of %d matching boxes in project %s", len(boxes), page["total"], s.Client.Session.Project)
+		text := fmt.Sprintf("%d of %d matching boxes in project %s", len(boxes), page["total"], s.backend().Session.Project)
 		if hidden, ok := page["archivedHidden"]; ok {
 			text += fmt.Sprintf(" (%d archived hidden)", hidden)
 		}
@@ -439,7 +439,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 			text += fmt.Sprintf("; more with offset %d", next)
 		}
 		text += ". Task previews are truncated; read_box shows a box's terminal.\n" + boxTable(boxes)
-		return modelResult(text, page, map[string]any{"view": "boxes", "boxes": widgetBoxes(inbox.Boxes), "project": s.Client.Session.Project})
+		return modelResult(text, page, map[string]any{"view": "boxes", "boxes": widgetBoxes(inbox.Boxes), "project": s.backend().Session.Project})
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "launch_box", Description: "Launch a task in a separate box using a harness and optional model/pool. Settings apply to this run only. Starts with an empty workspace and no Discobox API access or explicit credential bindings. Keep requestId for this exact intent; never retry uncertain creation using a new ID. Use returned boxId with read_box/send_box/wait_box/interrupt_box for direct text interaction.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, input createInput) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.launch(ctx, input, "box")
@@ -489,7 +489,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 			return nil, nil, err
 		}
 		inbox.Boxes = widgetBoxes(inbox.Boxes)
-		return nil, map[string]any{"view": "boxes", "boxes": inbox.Boxes, "inbox": inbox, "project": s.Client.Session.Project}, nil
+		return nil, map[string]any{"view": "boxes", "boxes": inbox.Boxes, "inbox": inbox, "project": s.backend().Session.Project}, nil
 	})
 }
 

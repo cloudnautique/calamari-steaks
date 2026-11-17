@@ -122,6 +122,9 @@ func save(path string, c Config) error {
 type Result struct {
 	State   string `json:"state"`
 	Message string `json:"message"`
+	// Steps is the layer-by-layer diagnosis behind State, when one ran.
+	Steps         []discobox.Step `json:"steps,omitempty"`
+	ServerVersion string          `json:"serverVersion,omitempty"`
 }
 type Status struct {
 	Result
@@ -133,7 +136,16 @@ type Status struct {
 	RestartRequired   bool   `json:"restartRequired"`
 	LocalDefault      string `json:"localDefault"`
 	Scope             string `json:"scope"`
+	// LastSuccess and LastFailure record real backend traffic, not only
+	// explicit tests, so status reflects whether the connection works now.
+	LastSuccess *time.Time `json:"lastSuccess,omitempty"`
+	LastFailure *time.Time `json:"lastFailure,omitempty"`
+	// CanApply means saved settings take effect without a restart.
+	CanApply bool `json:"canApply"`
 }
+
+// Apply builds, tests and switches to a connection generation for config.
+type Apply func(context.Context, Config) (Result, error)
 type Probe func(context.Context, Config) Result
 
 // Controller keeps one immutable active connection per process. Saving a new
@@ -149,13 +161,31 @@ type Controller struct {
 	pending            *Config
 	peer               string
 	needsRestart       bool
+	// Apply, when set, switches the running adapter to saved settings.
+	Apply       Apply
+	lastSuccess time.Time
+	lastFailure time.Time
+}
+
+// Observe records the outcome of real backend traffic for status.
+func (c *Controller) Observe(ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ok {
+		c.lastSuccess = time.Now()
+		if c.status.State == "not_tested" {
+			c.status = Result{State: "connected", Message: "Connected: the box catalog was read successfully."}
+		}
+	} else {
+		c.lastFailure = time.Now()
+	}
 }
 
 func New(c Config, path, identity string, managed bool, probe Probe, initialError error) *Controller {
 	c = canonical(c)
-	state := Result{"not_tested", "Test this connection. Setup never creates a box."}
+	state := Result{State: "not_tested", Message: "Test this connection. Setup never creates a box."}
 	if initialError != nil {
-		state = Result{"setup_required", "Connection initialization failed. Review settings and identity, then restart the adapter."}
+		state = Result{State: "setup_required", Message: "Connection initialization failed. Review settings and identity, then save them again."}
 	}
 	return &Controller{Current: c, Path: path, IdentityPath: identity, Managed: managed, Probe: probe, status: state, needsRestart: initialError != nil}
 }
@@ -166,13 +196,25 @@ func (c *Controller) Status() Status {
 	if Validate(display) != nil {
 		display = Config{Endpoint: "", Project: "default"}
 	}
-	s := Status{LocalDefault: LocalAddress(), Result: c.status, Config: display, ResolvedEndpoint: "", Managed: c.Managed, PeerID: c.peer, RestartRequired: c.pending != nil, Scope: "Peer enrollment grants the server's default-user access across authorized projects; selecting a project does not narrow that credential."}
+	s := Status{LocalDefault: LocalAddress(), Result: c.status, Config: display, ResolvedEndpoint: "", Managed: c.Managed, PeerID: c.peer, RestartRequired: c.pending != nil, CanApply: c.Apply != nil && !c.Managed, Scope: "Peer enrollment grants the server's default-user access across authorized projects; selecting a project does not narrow that credential."}
+	if !c.lastSuccess.IsZero() {
+		at := c.lastSuccess
+		s.LastSuccess = &at
+	}
+	if !c.lastFailure.IsZero() {
+		at := c.lastFailure
+		s.LastFailure = &at
+	}
 	if display.Endpoint != "" {
 		s.ResolvedEndpoint = Resolve(display.Endpoint)
 	}
 	if c.pending != nil {
 		s.Config = *c.pending
-		s.Result = Result{"restart_required", "Settings saved. Restart this MCP adapter to apply them; existing views stay on the current connection."}
+		if c.status.State != "" && c.status.State != "not_tested" && c.status.State != "connected" && c.status.State != "setup_required" {
+			s.Result = c.status
+		} else {
+			s.Result = Result{State: "restart_required", Message: "Settings saved. Restart this MCP adapter to apply them; existing views stay on the current connection."}
+		}
 		s.ResolvedEndpoint = Resolve(s.Config.Endpoint)
 	}
 	if c.peer != "" {
@@ -215,7 +257,13 @@ func (c *Controller) Test(ctx context.Context, candidate Config) (Result, error)
 	c.mu.Unlock()
 	return result, nil
 }
+
+// Save stores the profile and, when the adapter can, applies it at once:
+// new operations use it, open views stay on the previous connection.
 func (c *Controller) Save(candidate Config) (Status, error) {
+	return c.SaveContext(context.Background(), candidate)
+}
+func (c *Controller) SaveContext(ctx context.Context, candidate Config) (Status, error) {
 	candidate = canonical(candidate)
 	if c.Managed {
 		return c.Status(), errors.New("this connection is pinned by the launcher; change its flags or extension settings")
@@ -229,14 +277,68 @@ func (c *Controller) Save(candidate Config) (Status, error) {
 		c.mu.Unlock()
 		return c.Status(), e
 	}
-	if !reflect.DeepEqual(candidate, c.Current) || c.needsRestart {
+	changed := !reflect.DeepEqual(candidate, c.Current) || c.needsRestart
+	if changed {
 		copy := candidate
 		c.pending = &copy
 	} else {
 		c.pending = nil
 	}
+	apply := c.Apply
+	c.mu.Unlock()
+	if !changed || apply == nil {
+		return c.Status(), nil
+	}
+	if !c.probeMu.TryLock() {
+		return c.Status(), errors.New("a connection test is running; save again when it finishes")
+	}
+	defer c.probeMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	result, e := apply(ctx, candidate)
+	c.mu.Lock()
+	if e == nil {
+		c.Current, c.pending, c.needsRestart = candidate, nil, false
+		result.Message = "Connected and applied. New requests use this connection; views that are already open stay on the previous one until closed."
+		c.status = result
+	} else {
+		result.Message = "Saved, but not applied: " + result.Message + " Fix the problem and save again, or restart the adapter."
+		c.status = result
+	}
 	c.mu.Unlock()
 	return c.Status(), nil
+}
+
+// ProbeConnection diagnoses each layer to the server over the connection's
+// own transport, then reads the project's catalog. It never creates or
+// starts anything.
+func ProbeConnection(ctx context.Context, conn *discobox.Connection) Result {
+	steps, version := conn.Diagnose(ctx)
+	for _, step := range steps {
+		if step.Status != "failed" {
+			continue
+		}
+		result := Result{Steps: steps, ServerVersion: version, State: "unreachable", Message: step.Summary}
+		switch step.Layer {
+		case "address":
+			result.State = "invalid_settings"
+		case "runtime", "identity", "bind":
+			result.State = "identity_error"
+		case "relay":
+			result.State = "relay_unreachable"
+		case "admission":
+			result.State = "not_admitted"
+		case "server":
+			result.State = "server_unavailable"
+		}
+		if step.Hint != "" {
+			result.Message += ". " + step.Hint
+		}
+		return result
+	}
+	result := probeCatalog(ctx, conn.Client)
+	result.Steps, result.ServerVersion = steps, version
+	return result
 }
 
 // ProbeConfigured performs only a bounded project catalog GET. The caller owns
@@ -244,23 +346,27 @@ func (c *Controller) Save(candidate Config) (Status, error) {
 func ProbeConfigured(ctx context.Context, c Config, token string) Result {
 	client, e := discobox.NewCatalog(Resolve(c.Endpoint), token, c.Project)
 	if e != nil {
-		return Result{"invalid_settings", "Invalid connection settings."}
+		return Result{State: "invalid_settings", Message: "Invalid connection settings."}
 	}
-	_, e = client.ListBoxes(ctx, "")
+	return probeCatalog(ctx, client)
+}
+
+func probeCatalog(ctx context.Context, client *discobox.Client) Result {
+	_, e := client.ListBoxes(ctx, "")
 	if e == nil {
-		return Result{"connected", "Connected. The selected project's box catalog is readable; no box was started or created."}
+		return Result{State: "connected", Message: "Connected. The selected project's box catalog is readable; no box was started or created."}
 	}
 	var h *discobox.HTTPError
 	switch {
 	case errors.As(e, &h) && h.Status == 401:
-		return Result{"unauthorized", "The API requires authorization. For Iroh, enroll this adapter using an already-authorized operator."}
+		return Result{State: "unauthorized", Message: "The API requires authorization. For Iroh, enroll this adapter using an already-authorized operator."}
 	case errors.As(e, &h) && h.Status == 403:
-		return Result{"forbidden", "This connection is not allowed to read the selected project. Check operator enrollment and project access."}
+		return Result{State: "forbidden", Message: "This connection is not allowed to read the selected project. Check operator enrollment and project access."}
 	case errors.Is(e, os.ErrNotExist):
-		return Result{"socket_missing", "The local socket was not found. Start Discobox, choose a custom socket, or select Remote computer."}
+		return Result{State: "socket_missing", Message: "The local socket was not found. Start Discobox, choose a custom socket, or select Remote computer."}
 	case errors.Is(e, os.ErrPermission):
-		return Result{"socket_denied", "The local socket could not be opened with this user's filesystem permissions."}
+		return Result{State: "socket_denied", Message: "The local socket could not be opened with this user's filesystem permissions."}
 	default:
-		return Result{"unreachable", "Could not reach or verify Discobox. Check the server listener, address, relay, and network. A timeout does not establish enrollment denial."}
+		return Result{State: "unreachable", Message: "Could not reach or verify Discobox. Check the server listener, address, relay, and network. A timeout does not establish enrollment denial."}
 	}
 }

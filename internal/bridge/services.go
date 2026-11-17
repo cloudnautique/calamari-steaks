@@ -51,6 +51,7 @@ type forwardInfo struct {
 	Message   string    `json:"message"`
 }
 type serviceForward struct {
+	client    *discobox.Client // the connection generation this forward was opened on
 	target    discobox.ServicePort
 	info      forwardInfo
 	listener  net.Listener
@@ -178,7 +179,7 @@ func (s *Server) openForward(ctx context.Context, in serviceInput) (forwardInfo,
 		return forwardInfo{}, errors.New("another forward is being opened; wait a moment and open this one again")
 	}
 	// Revalidate even an existing forward before returning it.
-	probe, port, e := s.Client.DialServicePort(ctx, in.BoxID, s.managerOptions.Parent, in.Port)
+	probe, port, e := s.backend().DialServicePort(ctx, in.BoxID, s.managerOptions.Parent, in.Port)
 	if e != nil {
 		var h *discobox.HTTPError
 		if errors.As(e, &h) && h.Status == 403 {
@@ -219,7 +220,7 @@ func (s *Server) openForward(ctx context.Context, in serviceInput) (forwardInfo,
 	if port.Protocol == "http" || port.Protocol == "https" {
 		info.URL = port.Protocol + "://" + info.Address + "/"
 	}
-	f := &serviceForward{target: port, info: info, listener: listener, ctx: lifetime, cancel: cancel, last: time.Now(), validated: time.Now(), conns: map[net.Conn]bool{}, slots: make(chan struct{}, forwardConnections)}
+	f := &serviceForward{client: s.backend(), target: port, info: info, listener: listener, ctx: lifetime, cancel: cancel, last: time.Now(), validated: time.Now(), conns: map[net.Conn]bool{}, slots: make(chan struct{}, forwardConnections)}
 	s.serviceForwards[info.ID] = f
 	s.serviceMu.Unlock()
 	go s.serveForward(f)
@@ -273,7 +274,7 @@ func (f *serviceForward) idleLimit() time.Duration {
 func (s *Server) validate(f *serviceForward) (discobox.ServicePort, bool) {
 	ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
 	defer cancel()
-	target, e := s.Client.ResolveServicePort(ctx, f.info.BoxID, s.managerOptions.Parent, f.info.Port)
+	target, e := f.client.ResolveServicePort(ctx, f.info.BoxID, s.managerOptions.Parent, f.info.Port)
 	switch {
 	case errors.Is(e, discobox.ErrPortNotReported):
 		f.mu.Lock()
@@ -368,7 +369,7 @@ func (s *Server) spliceForward(f *serviceForward, local net.Conn) {
 			return
 		}
 	}
-	remote, e := s.Client.DialResolvedPort(f.ctx, f.info.BoxID, target)
+	remote, e := f.client.DialResolvedPort(f.ctx, f.info.BoxID, target)
 	if e != nil {
 		return
 	}
@@ -416,11 +417,11 @@ func (w *forwardWriter) Write(p []byte) (int, error) {
 	return n, e
 }
 func (s *Server) servicesData(ctx context.Context, box string) (map[string]any, error) {
-	catalog, e := s.Client.Services(ctx, box, s.managerOptions.Parent)
+	catalog, e := s.backend().Services(ctx, box, s.managerOptions.Parent)
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"view": "services", "boxId": box, "project": s.Client.Session.Project, "catalog": catalog, "forwards": s.forwards(box), "closedForwards": s.closedForwards(box), "forwardingAvailable": s.managerOptions.Parent == ""}, nil
+	return map[string]any{"view": "services", "boxId": box, "project": s.backend().Session.Project, "catalog": catalog, "forwards": s.forwards(box), "closedForwards": s.closedForwards(box), "forwardingAvailable": s.managerOptions.Parent == ""}, nil
 }
 func servicePrivate(data any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Service app response; details are delivered privately to the widget."}}, Meta: mcp.Meta{"services": data}}
@@ -441,7 +442,7 @@ func (s *Server) serviceTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{Name: "control_service", Description: "Explicitly start, stop or restart a declared service by boxId/serviceId. Does not create declarations. No automatic retry after an uncertain response; inspect state before another action."}, func(ctx context.Context, _ *mcp.CallToolRequest, in serviceActionInput) (*mcp.CallToolResult, map[string]any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 		defer cancel()
-		data, e := s.Client.ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
+		data, e := s.backend().ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
 		return nil, data, e
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "open_service", Description: "Open a loopback TCP forward for a currently reported/declared box port. May wake it. Requires an authorized host connection; sandbox API roles cannot tunnel. Does not start the service. The address is on the adapter's machine, not a hosted preview. HTTP(S) ports include a browser URL; bytes stay outside model context.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, in servicePortInput) (*mcp.CallToolResult, map[string]any, error) {
@@ -451,7 +452,7 @@ func (s *Server) serviceTools(server *mcp.Server) {
 		if e != nil {
 			return nil, nil, e
 		}
-		return workspaceResult(map[string]any{"view": "services", "boxId": in.BoxID, "project": s.Client.Session.Project, "forward": info})
+		return workspaceResult(map[string]any{"view": "services", "boxId": in.BoxID, "project": s.backend().Session.Project, "forward": info})
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "close_service_forward", Description: "Close only this adapter's selected forward and its connections. Does not stop the remote service."}, func(ctx context.Context, _ *mcp.CallToolRequest, in forwardInput) (*mcp.CallToolResult, map[string]any, error) {
 		e := s.closeForward(in.ForwardID)
@@ -463,13 +464,13 @@ func (s *Server) serviceTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{Name: "read_service_logs", Description: "TEXT ONLY: explicitly read up to 64 KiB of recent untrusted service logs. Logs may contain sensitive application output; use the Services widget for private viewing.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, in serviceTargetInput) (*mcp.CallToolResult, map[string]any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		data, e := s.Client.ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
+		data, e := s.backend().ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
 		return nil, data, e
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "service_logs", Description: "App-only private service log read.", Meta: private}, func(ctx context.Context, _ *mcp.CallToolRequest, in serviceTargetInput) (*mcp.CallToolResult, any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		data, e := s.Client.ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
+		data, e := s.backend().ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
 		if e != nil {
 			return nil, nil, e
 		}
@@ -499,7 +500,7 @@ func (s *Server) serviceHTTP(mux *http.ServeMux) {
 		case "list_services":
 			data, e = s.servicesData(ctx, in.BoxID)
 		case "control_service":
-			data, e = s.Client.ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
+			data, e = s.backend().ControlService(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID, in.Action)
 		case "open_service":
 			data, e = s.openForward(ctx, in)
 			if e == nil {
@@ -513,7 +514,7 @@ func (s *Server) serviceHTTP(mux *http.ServeMux) {
 		case "service_open_browser":
 			data, e = s.openServiceBrowser(in.ForwardID)
 		case "service_logs":
-			data, e = s.Client.ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
+			data, e = s.backend().ServiceLogs(ctx, in.BoxID, s.managerOptions.Parent, in.ServiceID)
 		case "service_keepalive":
 			e = s.keepForward(in.ForwardID)
 			data = map[string]any{"renewed": e == nil}

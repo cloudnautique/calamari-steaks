@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/connection"
@@ -28,7 +29,8 @@ type Server struct {
 	serviceForwards  map[string]*serviceForward
 	serviceClosed    []forwardInfo
 	forwardPorts     map[forwardKey]string
-	Client           *discobox.Client
+	backendClient    atomic.Pointer[discobox.Client]
+	generationMu     sync.Mutex
 	Onboarding       *connection.Controller
 	Origin           string
 	// LegacyTools serves the manager-named tool aliases and pre-0.12 view
@@ -68,7 +70,10 @@ func New(client *discobox.Client, origin string, extraOrigins []string, accessTo
 	if decoded, err := hex.DecodeString(accessToken); err != nil || len(decoded) != 32 {
 		return nil, errors.New("access token must contain 64 hexadecimal characters")
 	}
-	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
+	s := &Server{Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
+	if client != nil {
+		s.backendClient.Store(client)
+	}
 	s.desktops = make(map[string]*desktopSession)
 	s.evictedTerminals = make(map[string]string)
 	s.serviceForwards = make(map[string]*serviceForward)
@@ -97,8 +102,8 @@ func (s *Server) validToken(token string) bool {
 
 func (s *Server) connection() map[string]any {
 	session := discobox.Session{}
-	if s.Client != nil {
-		session = s.Client.Session
+	if s.backend() != nil {
+		session = s.backend().Session
 	}
 	return map[string]any{"origin": s.Origin, "token": s.token, "session": session}
 }
@@ -182,7 +187,7 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/terminal") {
+		if s.backend() == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/terminal") {
 			http.Error(w, "Connection setup required; open /setup using the private link", 503)
 			return
 		}
@@ -260,4 +265,34 @@ type HumanControlError struct{ Since time.Time }
 
 func (e *HumanControlError) Error() string {
 	return fmt.Sprintf("human_has_control: a person has had input in this box's terminal or desktop since %s. Nothing was sent. Wait (for example with wait_box) or ask them to click back into chat, then read the box again before sending", e.Since.UTC().Format(time.RFC3339))
+}
+
+// backend is the current connection generation's catalog client, or nil
+// before a connection is configured. Views keep the clients they opened with.
+func (s *Server) backend() *discobox.Client { return s.backendClient.Load() }
+
+// UseBackend switches new operations to another connection generation, for
+// example after the person saves a new profile in connection setup. Open
+// terminals, desktops and forwards keep the connection they were opened on
+// until they close; nothing is retargeted.
+func (s *Server) UseBackend(client *discobox.Client) {
+	s.generationMu.Lock()
+	defer s.generationMu.Unlock()
+	s.backendClient.Store(client)
+	s.managersMu.Lock()
+	s.managers = make(map[string]*managerConnection)
+	s.managersMu.Unlock()
+	// Review tokens were issued against the previous connection.
+	s.approvalMu.Lock()
+	clear(s.approvalReviews)
+	s.approvalMu.Unlock()
+	s.catalog.mu.Lock()
+	s.catalog.watchID++
+	s.catalog.backendID++
+	if s.catalog.watchCut != nil {
+		s.catalog.watchCut()
+	}
+	s.catalog.watchCut, s.catalog.watching = nil, false
+	s.catalog.fetched, s.catalog.stale = time.Time{}, true
+	s.catalog.mu.Unlock()
 }

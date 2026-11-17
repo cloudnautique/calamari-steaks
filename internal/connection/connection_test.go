@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -36,7 +38,7 @@ func TestLocalResolverAndValidation(t *testing.T) {
 func TestSaveIsPrivateOfflineAndRequiresRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings", "connection.json")
 	var calls atomic.Int32
-	c := New(Config{Endpoint: "unix://", Project: "default"}, path, filepath.Join(t.TempDir(), "key"), false, func(context.Context, Config) Result { calls.Add(1); return Result{"connected", "ok"} }, nil)
+	c := New(Config{Endpoint: "unix://", Project: "default"}, path, filepath.Join(t.TempDir(), "key"), false, func(context.Context, Config) Result { calls.Add(1); return Result{State: "connected", Message: "ok"} }, nil)
 	candidate := Config{Endpoint: "unix:///tmp/other.sock", Project: "research"}
 	status, e := c.Save(candidate)
 	if e != nil {
@@ -65,7 +67,7 @@ func TestSaveIsPrivateOfflineAndRequiresRestart(t *testing.T) {
 }
 func TestManagedConnectionAndIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "key")
-	c := New(Config{Endpoint: "unix://", Project: "default"}, filepath.Join(t.TempDir(), "settings"), path, true, func(context.Context, Config) Result { return Result{"connected", "ok"} }, nil)
+	c := New(Config{Endpoint: "unix://", Project: "default"}, filepath.Join(t.TempDir(), "settings"), path, true, func(context.Context, Config) Result { return Result{State: "connected", Message: "ok"} }, nil)
 	if _, e := c.Save(c.Current); e == nil {
 		t.Fatal("overrode managed configuration")
 	}
@@ -134,5 +136,40 @@ func TestProbeOnlyReadsCatalogAndClassifiesHTTPDenial(t *testing.T) {
 	}
 	if gets.Load() != 4 {
 		t.Fatal("probe made extra requests")
+	}
+}
+
+func TestSaveAppliesInPlaceWhenTheAdapterCan(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "connection.json")
+	c := New(Config{Endpoint: "unix://", Project: "default"}, path, filepath.Join(t.TempDir(), "key"), false, nil, errors.New("startup failed"))
+	var applied []Config
+	healthy := false
+	c.Apply = func(_ context.Context, cfg Config) (Result, error) {
+		applied = append(applied, cfg)
+		if !healthy {
+			return Result{State: "not_admitted", Message: "Peer reachable but this adapter is not enrolled.", Steps: nil}, errors.New("not_admitted")
+		}
+		return Result{State: "connected", Message: "ok"}, nil
+	}
+	candidate := Config{Endpoint: "unix:///tmp/other.sock", Project: "research"}
+	status, err := c.SaveContext(context.Background(), candidate)
+	if err != nil || status.State != "not_admitted" || !status.RestartRequired || !strings.Contains(status.Message, "not applied") || !status.CanApply {
+		t.Fatalf("failed apply: %+v %v", status, err)
+	}
+	healthy = true
+	status, err = c.SaveContext(context.Background(), candidate)
+	if err != nil || status.State != "connected" || status.RestartRequired || !reflect.DeepEqual(c.Current, candidate) {
+		t.Fatalf("apply: %+v %v", status, err)
+	}
+	if len(applied) != 2 {
+		t.Fatalf("apply calls: %d", len(applied))
+	}
+	// Saving the active settings again does not rebuild the connection.
+	if _, err := c.SaveContext(context.Background(), candidate); err != nil || len(applied) != 2 {
+		t.Fatal("re-applied unchanged settings")
+	}
+	c.Observe(true)
+	if c.Status().LastSuccess == nil {
+		t.Fatal("passive health not recorded")
 	}
 }

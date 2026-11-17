@@ -37,7 +37,7 @@ func (s *Server) boxView(ctx context.Context, boxID, view, filePath string) (*mc
 	if filePath != "" && view != "files" {
 		return nil, nil, errors.New("filePath applies only to view=files")
 	}
-	data := map[string]any{"view": view, "boxId": boxID, "project": s.Client.Session.Project}
+	data := map[string]any{"view": view, "boxId": boxID, "project": s.backend().Session.Project}
 	var content []mcp.Content
 	switch view {
 	case "terminal":
@@ -51,7 +51,7 @@ func (s *Server) boxView(ctx context.Context, boxID, view, filePath string) (*mc
 		data["view"] = "workspace"
 	case "files":
 		if filePath != "" {
-			info, err := s.Client.StatFile(ctx, boxID, s.managerOptions.Parent, filePath)
+			info, err := s.backend().StatFile(ctx, boxID, s.managerOptions.Parent, filePath)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -62,17 +62,17 @@ func (s *Server) boxView(ctx context.Context, boxID, view, filePath string) (*mc
 			data["directory"] = path.Dir(info.Path)
 			content = append(content, fileLink(info))
 		} else {
-			if err := s.Client.BoxAccess(ctx, boxID, s.managerOptions.Parent); err != nil {
+			if err := s.backend().BoxAccess(ctx, boxID, s.managerOptions.Parent); err != nil {
 				return nil, nil, err
 			}
 			data["directory"] = "/workspace"
 		}
 	case "services":
-		if err := s.Client.BoxAccess(ctx, boxID, s.managerOptions.Parent); err != nil {
+		if err := s.backend().BoxAccess(ctx, boxID, s.managerOptions.Parent); err != nil {
 			return nil, nil, err
 		}
 	case "desktop":
-		info, err := s.Client.Desktop(ctx, boxID, s.managerOptions.Parent)
+		info, err := s.backend().Desktop(ctx, boxID, s.managerOptions.Parent)
 		if err != nil {
 			return nil, nil, err
 		}

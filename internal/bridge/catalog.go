@@ -30,6 +30,8 @@ type catalogCache struct {
 	err       error
 	watching  bool
 	watchCut  context.CancelFunc
+	watchID   int
+	backendID int // bumped when the connection generation changes
 	lastRead  time.Time
 	stale     bool
 	supported bool
@@ -74,11 +76,15 @@ func (s *Server) snapshot(ctx context.Context, maxAge time.Duration) (discobox.I
 		done := make(chan struct{})
 		c.inflight = done
 		c.stale = false
+		generation := c.backendID
 		c.mu.Unlock()
-		inbox, err := s.Client.Attention(ctx, s.managerOptions.Parent)
+		inbox, err := s.backend().Attention(ctx, s.managerOptions.Parent)
+		if s.Onboarding != nil && ctx.Err() == nil {
+			s.Onboarding.Observe(err == nil)
+		}
 		c.mu.Lock()
 		c.inflight, c.err = nil, err
-		if err == nil {
+		if err == nil && generation == c.backendID {
 			c.inbox, c.fetched = inbox, time.Now()
 		}
 		c.mu.Unlock()
@@ -92,15 +98,24 @@ func (s *Server) snapshot(ctx context.Context, maxAge time.Duration) (discobox.I
 func (s *Server) watchCatalog() {
 	c := &s.catalog
 	c.mu.Lock()
-	if c.watchCut != nil || s.Client == nil {
+	if c.watchCut != nil || s.backend() == nil {
 		c.mu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c.watchCut = cancel
+	c.watchID++
+	id, client := c.watchID, s.backend()
 	c.mu.Unlock()
 	go func() {
-		defer func() { c.mu.Lock(); c.watching, c.watchCut = false, nil; c.mu.Unlock(); cancel() }()
+		defer func() {
+			c.mu.Lock()
+			if c.watchID == id {
+				c.watching, c.watchCut = false, nil
+			}
+			c.mu.Unlock()
+			cancel()
+		}()
 		go func() {
 			ticker := time.NewTicker(30 * time.Second)
 			defer ticker.Stop()
@@ -119,15 +134,20 @@ func (s *Server) watchCatalog() {
 				}
 			}
 		}()
-		err := s.Client.WatchSandboxEvents(ctx, func() {
+		err := client.WatchSandboxEvents(ctx, func() {
 			c.mu.Lock()
-			c.watching, c.stale = true, true
+			if c.watchID == id {
+				c.watching, c.stale = true, true
+			}
 			c.mu.Unlock()
 		})
 		if errors.Is(err, discobox.ErrEventsUnsupported) {
-			// Fall back to age-based refresh; do not try again this process.
+			// Fall back to age-based refresh for this connection.
 			c.mu.Lock()
-			c.watchCut = func() {}
+			if c.watchID == id {
+				c.watchCut, c.watching = func() {}, false
+				id = -1 // keep the placeholder; the deferred reset skips it
+			}
 			c.mu.Unlock()
 		}
 	}()

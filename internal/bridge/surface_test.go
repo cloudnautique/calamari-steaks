@@ -79,7 +79,7 @@ func TestLegacyUIResourcesStillResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := mcpClient(t, ctx, s)
-	for _, uri := range []string{uiResource, "ui://discobox/workspace-v13.html", "ui://discobox/manager.html", setupResourceURI, "ui://discobox/connection-v1.html"} {
+	for _, uri := range []string{uiResource, "ui://discobox/workspace-v13.html", "ui://discobox/manager.html", setupResourceURI, "ui://discobox/connection-v2.html", "ui://discobox/connection-v1.html"} {
 		result, err := client.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 		if err != nil || len(result.Contents) != 1 || !strings.Contains(result.Contents[0].Text, "<") || result.Contents[0].URI != uri {
 			t.Errorf("%s: %v", uri, err)

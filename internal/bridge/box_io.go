@@ -109,7 +109,7 @@ func (s *Server) controlBox(ctx context.Context, id, action string) (map[string]
 			}
 		}
 	}
-	if _, err := s.Client.BoxPower(ctx, id, s.managerOptions.Parent, action); err != nil {
+	if _, err := s.backend().BoxPower(ctx, id, s.managerOptions.Parent, action); err != nil {
 		return nil, err
 	}
 	s.invalidateCatalog()

@@ -226,6 +226,11 @@ func run() error {
 	defer s.CloseServiceForwards()
 	defer s.CloseFileUploads()
 	s.Onboarding = onboarding
+	if *browse && !managed {
+		// Saved profiles apply in place; launcher-pinned and single-box
+		// sessions still need a restart.
+		onboarding.Apply = applyConnection(s, *identity, cfg, token)
+	}
 	s.LegacyTools = *legacyTools
 	s.BrowserUI = *browserUI
 	if *browserUI {

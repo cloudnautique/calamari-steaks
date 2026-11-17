@@ -12,7 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const setupResourceURI = "ui://discobox/connection-v2.html"
+const setupResourceURI = "ui://discobox/connection-v3.html"
 
 func setupResult(value any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Connection setup updated. No backend authorization or box creation was performed."}}, Meta: mcp.Meta{"onboarding": value}}
@@ -32,17 +32,17 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		}
 		status := c.Status()
 		result := setupResult(status)
-		result.Content = []mcp.Content{&mcp.TextContent{Text: status.Message + " Local setup uses the shared Discobox resolver: unix:// on macOS/Linux or npipe:// on Windows. For a remote server, enter its discobox:// peer address, call get_connection_peer_id, and have an already-authorized operator run the returned enrollment command on the intended server. The widget cannot approve itself. Save changes in the widget and restart the adapter. Text-only clients can set --discobox and --project launcher flags (or the extension overrides), then restart and call test_connection. Do not paste private keys or credentials into chat."}}
+		result.Content = []mcp.Content{&mcp.TextContent{Text: status.Message + " Local setup uses the shared Discobox resolver: unix:// on macOS/Linux or npipe:// on Windows. For a remote server, enter its discobox:// peer address, call get_connection_peer_id, and have an already-authorized operator run the returned enrollment command on the intended server. The widget cannot approve itself. Saving in the widget applies the connection at once where the adapter allows it; otherwise restart the adapter. Text-only clients can set --discobox and --project launcher flags (or the extension overrides), then restart and call test_connection. Do not paste private keys or credentials into chat."}}
 		return result, status, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "connection_status", Description: "TEXT: show current Discobox connection settings, last explicit test, and restart status. Does not contact the backend, create keys, or prove current reachability. Use test_connection for a fresh check.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Status, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "connection_status", Description: "Show the Discobox connection settings, the last test (with its layer-by-layer diagnosis), when backend traffic last succeeded or failed, and whether a restart is needed. Does not contact the backend; use test_connection for a fresh check.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Status, error) {
 		c, e := s.setupController()
 		if e != nil {
 			return nil, connection.Status{}, e
 		}
 		return nil, c.Status(), nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "test_connection", Description: "Test the currently configured Discobox connection using a bounded read of the selected project's catalog. No creation, input, enrollment, or automatic retry.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Result, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "test_connection", Description: "Test the configured Discobox connection layer by layer (address, identity, relay, peer, admission, server) and read the project's catalog. A timeout does not prove enrollment was denied. No creation, input, enrollment or automatic retry.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Result, error) {
 		c, e := s.setupController()
 		if e != nil {
 			return nil, connection.Result{}, e
@@ -70,12 +70,12 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		}
 		return setupResult(r), nil, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "connection_save", Description: "App-only: save the person's explicit local/remote profile without credentials. Does not retarget active sessions; restart the adapter to apply changes.", Meta: private}, func(ctx context.Context, _ *mcp.CallToolRequest, in connection.Config) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "connection_save", Description: "App-only: save the person's explicit local/remote profile without credentials and apply it to new requests when possible. Never retargets open views.", Meta: private}, func(ctx context.Context, _ *mcp.CallToolRequest, in connection.Config) (*mcp.CallToolResult, any, error) {
 		c, e := s.setupController()
 		if e != nil {
 			return nil, nil, e
 		}
-		r, e := c.Save(in)
+		r, e := c.SaveContext(ctx, in)
 		if e != nil {
 			return nil, nil, e
 		}
@@ -86,7 +86,7 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 	// tools/resources return actionable errors instead of dereferencing nil.
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if s.Client == nil {
+			if s.backend() == nil {
 				if method == "tools/call" {
 					name := ""
 					switch p := req.GetParams().(type) {
@@ -96,7 +96,7 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 						name = p.Name
 					}
 					if name != "open_connection_setup" && name != "test_connection" && name != "get_connection_peer_id" && !strings.HasPrefix(name, "connection_") {
-						return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Connection setup is required. Call open_connection_setup or connection_status. Save corrected settings and restart this adapter."}}}, nil
+						return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Connection setup is required. Call open_connection_setup (or connection_status in text-only clients) and save working settings."}}}, nil
 					}
 				}
 				if method == "resources/read" {
@@ -156,7 +156,7 @@ func (s *Server) setupHTTP(mux *http.ServeMux) {
 	})))
 }
 
-var legacySetupResources = map[string]bool{"connection-v1.html": true}
+var legacySetupResources = map[string]bool{"connection-v2.html": true, "connection-v1.html": true}
 
 func setupResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	html, e := web.SetupHTML()
