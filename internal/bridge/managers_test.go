@@ -158,6 +158,7 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.LegacyTools = true
+	s.BrowserUI = true
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	client := mcpClient(t, ctx, s)

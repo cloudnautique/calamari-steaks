@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -164,5 +165,22 @@ func TestModelCatalogIsBoundedAndCached(t *testing.T) {
 	widget, _ := json.Marshal(result.Meta["connection"])
 	if !strings.Contains(string(widget), `"boxes"`) || len(widget) > 100*(widgetTaskLimit+1024) {
 		t.Fatalf("widget catalog missing or unbounded: %d bytes", len(widget))
+	}
+}
+
+func TestBrowserUIIsOptIn(t *testing.T) {
+	s, err := New(nil, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := s.Handler(http.NotFoundHandler())
+	for _, path := range []string{"/", "/setup", "/api/session", "/terminal"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+path, nil)
+		request.Header.Set("Authorization", "Bearer "+s.Token())
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound && recorder.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s served without --browser-ui: %d", path, recorder.Code)
+		}
 	}
 }

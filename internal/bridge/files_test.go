@@ -42,6 +42,7 @@ func TestFileToolsAndResourceShareTheSameAuthorizedContent(t *testing.T) {
 	catalog, _ := discobox.NewCatalog(backend.URL, "", "p")
 	server, err := New(catalog, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{Parent: "caller"})
 	server.LegacyTools = true
+	server.BrowserUI = true
 	if err != nil {
 		t.Fatal(err)
 	}

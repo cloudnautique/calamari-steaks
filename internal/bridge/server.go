@@ -32,7 +32,10 @@ type Server struct {
 	Origin           string
 	// LegacyTools serves the manager-named tool aliases and pre-0.12 view
 	// tools for launchers configured against earlier versions.
-	LegacyTools      bool
+	LegacyTools bool
+	// BrowserUI serves the standalone browser workspace and setup page on
+	// the loopback listener. Off by default; MCP App hosts do not need it.
+	BrowserUI        bool
 	token            string
 	allowedOrigins   map[string]bool
 	managersMu       sync.Mutex
@@ -157,8 +160,37 @@ func (s *managerConnection) release(owner string) {
 	}
 }
 
+// Handler serves the loopback listener: the Streamable HTTP MCP endpoint
+// when mcpHandler is set, and the standalone browser UI only when
+// BrowserUI is enabled. The MCP App path never needs this listener.
 func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	if s.BrowserUI {
+		s.browserHTTP(mux)
+	}
+	if mcpHandler != nil {
+		mux.Handle("/mcp", s.auth(mcpHandler))
+	}
+	u, _ := url.Parse(s.Origin)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != u.Host {
+			http.Error(w, "unexpected host", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/terminal") {
+			http.Error(w, "Connection setup required; open /setup using the private link", 503)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// browserHTTP is the optional standalone browser UI (--browser-ui). It
+// mirrors the app tools over bearer-authenticated loopback HTTP.
+func (s *Server) browserHTTP(mux *http.ServeMux) {
 	s.setupHTTP(mux)
 	s.serviceHTTP(mux)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -196,24 +228,6 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 	mux.Handle("POST /api/files/{action}", s.auth(http.HandlerFunc(s.filesHTTP)))
 	mux.Handle("POST /api/managers/{action}", s.auth(http.HandlerFunc(s.workspaceHTTP)))
 	mux.HandleFunc("GET /terminal", s.terminal)
-	if mcpHandler != nil {
-		mux.Handle("/mcp", s.auth(mcpHandler))
-	}
-	u, _ := url.Parse(s.Origin)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != u.Host {
-			http.Error(w, "unexpected host", http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/ws") {
-			http.Error(w, "Connection setup required; open /setup using the private link", 503)
-			return
-		}
-		mux.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {

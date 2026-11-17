@@ -48,12 +48,15 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		sendJSON(ctx, ws, map[string]any{"type": "error", "message": err.Error()})
 		return
 	}
-	screen, err := manager.Client().Screen(ctx, 0)
+	// This socket stays on the session it attached to, even if the box is
+	// later reopened onto a new one.
+	client := manager.Client()
+	screen, err := client.Screen(ctx, 0)
 	if err != nil {
 		sendJSON(ctx, ws, map[string]any{"type": "error", "message": err.Error()})
 		return
 	}
-	stream, err := manager.Client().Attach(ctx)
+	stream, err := client.Attach(ctx)
 	if err != nil {
 		sendJSON(ctx, ws, map[string]any{"type": "error", "message": err.Error()})
 		return
@@ -65,7 +68,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 	}
 	owner := hex.EncodeToString(key[:])
 	defer manager.release(owner)
-	if err := sendJSON(ctx, ws, map[string]any{"type": "connected", "session": manager.Client().Session, "cols": screen["cols"], "rows": screen["rows"]}); err != nil {
+	if err := sendJSON(ctx, ws, map[string]any{"type": "connected", "session": client.Session, "cols": screen["cols"], "rows": screen["rows"]}); err != nil {
 		return
 	}
 	// An attach is a byte stream: frame boundaries need not match WS messages.
@@ -122,7 +125,7 @@ func (s *Server) terminal(w http.ResponseWriter, r *http.Request) {
 		case "input":
 			err = manager.writeAs(owner, func() error { return stream.Write(discobox.Input, []byte(message.Data)) })
 		case "message":
-			err = manager.writeAs(owner, func() error { _, err := manager.Client().Send(ctx, message.Text, true); return err })
+			err = manager.writeAs(owner, func() error { _, err := client.Send(ctx, message.Text, true); return err })
 			if err == nil {
 				err = sendJSON(ctx, ws, map[string]any{"type": "sent"})
 			}

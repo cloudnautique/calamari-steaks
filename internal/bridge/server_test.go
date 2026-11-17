@@ -103,6 +103,7 @@ func testServer(t *testing.T, b *fakeBackend) (*Server, *httptest.Server) {
 		t.Fatal(err)
 	}
 	s.LegacyTools = true // These tests also cover the legacy aliases.
+	s.BrowserUI = true
 	httpServer.Config.Handler = s.Handler(nil)
 	httpServer.Start()
 	t.Cleanup(httpServer.Close)

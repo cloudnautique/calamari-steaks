@@ -56,6 +56,7 @@ func run() error {
 	flag.Var(&allowed, "ui-origin", "Exact MCP iframe origin allowed to connect to the terminal; repeat as needed")
 	settingsPath := flag.String("connection-config", "", "Private connection profile path (default: user config discobox-mcp/connection.json)")
 	probe := flag.Bool("connection-probe", false, "Internal: bounded connection test using JSON settings on stdin")
+	browserUI := flag.Bool("browser-ui", false, "Also serve the standalone browser workspace and setup page on the loopback listener, with private links printed to stderr")
 	legacyTools := flag.Bool("legacy-manager-tools", false, "Also serve the manager-named tool aliases (open_manager, send_manager, ...) and pre-0.12 view tools; on by default with --box or manager creation options")
 	flag.Parse()
 	explicit := map[string]bool{}
@@ -226,7 +227,10 @@ func run() error {
 	defer s.CloseFileUploads()
 	s.Onboarding = onboarding
 	s.LegacyTools = *legacyTools
-	log.Printf("Connection setup (private link): %s/setup#token=%s", origin, s.Token())
+	s.BrowserUI = *browserUI
+	if *browserUI {
+		log.Printf("Connection setup (private link): %s/setup#token=%s", origin, s.Token())
+	}
 	mcpServer := s.MCP()
 	if *requestLog {
 		mcpServer.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -297,7 +301,9 @@ func run() error {
 	} else {
 		log.Print("Connection setup ready; backend operations are disabled until restart with valid settings")
 	}
-	log.Printf("Local terminal (private link): %s", s.BrowserURL())
+	if *browserUI {
+		log.Printf("Local browser workspace (private link): %s", s.BrowserURL())
+	}
 	if err := web.Ready(); err != nil {
 		log.Printf("Terminal UI not built: %v. MCP read/send/wait remain available.", err)
 	}

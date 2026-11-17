@@ -72,6 +72,15 @@ html, body, main, #workspace, #viewport, #terminal { min-width: 0; width: 100%; 
 .workspace-heading > div { min-width: 0; }
 header,footer,.workspace-heading,.workspace-tabs,.toolbar { flex-shrink: 0; }
 #notice { flex-shrink: 0; max-height: 96px; overflow: auto; }
+/* Inline chat embeds are about 520 px tall: give the terminal the room.
+   Task details and the footer return when the view is expanded. */
+@media(max-height:560px) {
+  #task-details,footer { display: none; }
+  .workspace-heading { padding: 6px 12px; }
+  .workspace-heading h1 { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+}
+.box-power summary { cursor: pointer; font-size: 12px; color: var(--text-faint); }
+.box-power[open] .actions { margin-top: 6px; }
 @media(max-height:650px) {
   .workspace-heading { padding: 8px 12px; }
   .workspace-heading h1 { font-size: 16px; }
@@ -114,6 +123,15 @@ header,footer,.workspace-heading,.workspace-tabs,.toolbar { flex-shrink: 0; }
 #file-preview blockquote { border-left: 2px solid var(--line-bright); padding-left: 14px; margin-left: 0; color: var(--text-muted); }
 #file-more { margin: 8px 16px; align-self: flex-start; }
 @media(max-width:650px) { #files-pane { display: flex; flex-direction: column; } .files-sidebar { max-height: 150px; flex-shrink: 0; border-right: 0; border-bottom: 1px solid var(--line); } .file-document { flex: 1; min-height: 0; } .file-heading { padding: 10px 12px; } #file-preview { padding: 12px; } }
+/* Inline chat embeds are about 520 px tall: give the terminal the room.
+   Task details and the footer return when the view is expanded. */
+@media(max-height:560px) {
+  #task-details,footer { display: none; }
+  .workspace-heading { padding: 6px 12px; }
+  .workspace-heading h1 { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+}
+.box-power summary { cursor: pointer; font-size: 12px; color: var(--text-faint); }
+.box-power[open] .actions { margin-top: 6px; }
 @media(max-height:650px) { .files-sidebar { max-height: 110px; } .file-heading { padding: 8px 12px; max-height: 55%; overflow: auto; flex-shrink: 0; } #file-preview { min-height: 0; } }
 
 #desktop-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #000; }
