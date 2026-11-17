@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
 	"github.com/cloudnautique/discobox-mcp-ui/internal/testhttp"
+	"github.com/coder/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
