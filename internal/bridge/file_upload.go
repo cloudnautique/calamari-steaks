@@ -168,6 +168,7 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 	s.uploadMu.Unlock()
 	return nil, errors.New("could not read staged upload")
 }
+
 type mkdirInput struct {
 	BoxID string `json:"boxId"`
 	Path  string `json:"path"`
