@@ -50,6 +50,11 @@ export function installTerminalLinks(element,terminal,open,report){
  let down;
  const pointer=event=>{down={x:event.clientX,y:event.clientY};};
  const click=event=>{
+  // Ghostty's own link provider window.open()s any detected scheme (mailto:,
+  // ssh:, ...) on Ctrl/Cmd-click. Swallow every modifier click so links from
+  // box output open only as HTTP(S) through the host's openLink.
+  const modified=event.ctrlKey||event.metaKey;
+  if(modified){event.preventDefault();event.stopImmediatePropagation();}
   if(event.button!==0||event.shiftKey||!down||Math.hypot(event.clientX-down.x,event.clientY-down.y)>5)return;
   const url=terminalURLAt(terminal,event);if(!url)return;
   event.preventDefault();event.stopImmediatePropagation();Promise.resolve(open(url)).catch(report);

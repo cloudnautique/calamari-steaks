@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {FilesModel,resolveFileLink,parentDirectory} from './files-model.js';
+import {FilesModel,MARKDOWN_URI_PATTERN,resolveFileLink,parentDirectory} from './files-model.js';
 const result=(boxId,path,text='report',version='v1')=>({boxId,file:{path,uri:`discobox-file://default/${boxId}${path}`,name:'report.md',mimeType:'text/markdown',version,size:text.length},text,nextOffset:text.length,truncated:false});
 test('late file reads never overwrite a different box selection',async()=>{
  let finish;const pending=new Promise(resolve=>finish=resolve);
@@ -28,4 +28,9 @@ test('directory paging appends entries and preserves the selected box',async()=>
 test('version polling clears a transient error after the connection recovers',async()=>{
  let fail=false;const model=new FilesModel(async(name,args)=>{if(name==='file_stat'){if(fail)throw Error('offline');return{version:'v1'}}return result(args.boxId,args.path)});
  model.bind('a');await model.open('/workspace/report.md');fail=true;await model.checkVersion();assert.match(model.state.error,/update check failed/);fail=false;await model.checkVersion();assert.equal(model.state.error,'');assert.equal(model.state.text,'report');
+});
+
+test('Markdown URI allow-list refuses every non-web scheme, including hyphenated ones',()=>{
+ for(const href of ['javascript:alert(1)','JaVaScRiPt:x','vbscript:x','data:text/html,x','file:///etc/passwd','ms-settings:x','search-ms:query=x','ms-msdt:/id','ms-officecmd:x','x-foo:y'])assert.equal(MARKDOWN_URI_PATTERN.test(href),false,href);
+ for(const href of ['https://example.org','http://example.org','discobox-file://default/box/workspace/a.md','notes.md','sub/notes.md','/workspace/a.md','#heading','?q=1','../up.md'])assert.equal(MARKDOWN_URI_PATTERN.test(href),true,href);
 });

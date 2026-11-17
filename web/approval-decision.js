@@ -27,3 +27,10 @@ export function decisionSummary(request,plan,credentials){
  if(plan.secretId)lines.push(`Credential: ${credentials.find(choice=>choice.id===plan.secretId)?.name||plan.secretId} (${plan.secretId})`,`Duration: ${plan.ttlSeconds} seconds`);
  return lines.join('\n');
 }
+
+// The box's requested duration (up to 30 days) is only a suggestion. Start the
+// person's decision at no more than one hour; they can extend it explicitly.
+export const APPROVAL_DEFAULT_TTL=3600;
+export function defaultApprovalTTL(requested){
+ return Number.isSafeInteger(requested)&&requested>0?Math.min(requested,APPROVAL_DEFAULT_TTL):APPROVAL_DEFAULT_TTL;
+}

@@ -1,0 +1,9 @@
+{
+  "name": "discobox-mcp-ui-mcpjam-tools",
+  "private": true,
+  "description": "Pinned MCPJam conformance tools for .github/workflows/mcpjam.yml. Installed with npm ci from the committed lockfile.",
+  "dependencies": {
+    "@mcpjam/cli": "6.2.2",
+    "@mcpjam/sdk": "10.7.0"
+  }
+}

@@ -258,7 +258,8 @@ function encodeBytes(bytes) {
 async function appCall(name, args) {
   const result = await app.callServerTool({ name, arguments: args });
   if (result.isError) throw new Error(result.content?.find((item) => item.type === 'text')?.text || `${name} failed`);
-  return result.structuredContent || JSON.parse(result.content.find((item) => item.type === 'text').text);
+  // Terminal handles and bytes arrive only in private _meta (never model context).
+  return result._meta?.terminal || result.structuredContent || JSON.parse(result.content.find((item) => item.type === 'text').text);
 }
 function closeApp() {
   clearTimeout(fitTimer); lastResize = undefined;

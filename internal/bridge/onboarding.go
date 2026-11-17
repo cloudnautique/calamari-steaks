@@ -2,10 +2,13 @@ package bridge
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/connection"
 	"github.com/cloudnautique/discobox-mcp-ui/web"
@@ -16,6 +19,63 @@ const setupResource = "ui://discobox/connection-v2.html"
 
 func setupResult(value any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Connection setup updated. No backend authorization or box creation was performed."}}, Meta: mcp.Meta{"onboarding": value}}
+}
+
+const setupTokenTTL = 30 * time.Minute
+const setupTokenLimit = 32
+
+// setupSave is connection_save's input: the draft profile plus a single-use
+// save token that the widget received only in private _meta.
+type setupSave struct {
+	Endpoint  string   `json:"endpoint"`
+	Project   string   `json:"project"`
+	Relays    []string `json:"relays,omitempty"`
+	SaveToken string   `json:"saveToken" jsonschema:"Private single-use token from the setup widget's _meta"`
+}
+
+// withSetupToken attaches a fresh single-use save token in _meta. Like the
+// approval review token, it never appears in content or structuredContent, so
+// a model on a host that exposed connection_save still could not retarget the
+// adapter's saved profile without the widget's private metadata.
+func (s *Server) withSetupToken(result *mcp.CallToolResult) (*mcp.CallToolResult, error) {
+	var key [24]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return nil, err
+	}
+	token := hex.EncodeToString(key[:])
+	now := time.Now()
+	s.setupMu.Lock()
+	if s.setupTokens == nil {
+		s.setupTokens = map[string]time.Time{}
+	}
+	for id, expires := range s.setupTokens {
+		if now.After(expires) {
+			delete(s.setupTokens, id)
+		}
+	}
+	for id := range s.setupTokens {
+		if len(s.setupTokens) < setupTokenLimit {
+			break
+		}
+		delete(s.setupTokens, id)
+	}
+	s.setupTokens[token] = now.Add(setupTokenTTL)
+	s.setupMu.Unlock()
+	if result == nil {
+		result = &mcp.CallToolResult{}
+	}
+	if result.Meta == nil {
+		result.Meta = mcp.Meta{}
+	}
+	result.Meta["setup"] = map[string]any{"saveToken": token}
+	return result, nil
+}
+func (s *Server) consumeSetupToken(token string) bool {
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	expires, found := s.setupTokens[token]
+	delete(s.setupTokens, token)
+	return found && token != "" && time.Now().Before(expires)
 }
 func (s *Server) setupController() (*connection.Controller, error) {
 	if s.Onboarding == nil {
@@ -33,6 +93,10 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		status := c.Status()
 		result := setupResult(status)
 		result.Content = []mcp.Content{&mcp.TextContent{Text: status.Message + " Local setup uses the shared Discobox resolver: unix:// on macOS/Linux or npipe:// on Windows. For a remote server, enter its discobox:// peer address, call get_connection_peer_id, and have an already-authorized operator run the returned enrollment command on the intended server. The widget cannot approve itself. Save changes in the widget and restart the adapter. Text-only clients can set --discobox and --project launcher flags (or the extension overrides), then restart and call test_connection. Do not paste private keys or credentials into chat."}}
+		result, e = s.withSetupToken(result)
+		if e != nil {
+			return nil, connection.Status{}, e
+		}
 		return result, status, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "connection_status", Description: "TEXT: show current Discobox connection settings, last explicit test, and restart status. Does not contact the backend, create keys, or prove current reachability. Use test_connection for a fresh check.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Status, error) {
@@ -40,7 +104,11 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		if e != nil {
 			return nil, connection.Status{}, e
 		}
-		return nil, c.Status(), nil
+		result, e := s.withSetupToken(nil)
+		if e != nil {
+			return nil, connection.Status{}, e
+		}
+		return result, c.Status(), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "test_connection", Description: "Test the currently configured Discobox connection using a bounded read of the selected project's catalog. No creation, input, enrollment, or automatic retry.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Result, error) {
 		c, e := s.setupController()
@@ -68,18 +136,23 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		if e != nil {
 			return nil, nil, e
 		}
-		return setupResult(r), nil, nil
+		result, e := s.withSetupToken(setupResult(r))
+		return result, nil, e
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "connection_save", Description: "App-only: save the person's explicit local/remote profile without credentials. Does not retarget active sessions; restart the adapter to apply changes.", Meta: private}, func(ctx context.Context, _ *mcp.CallToolRequest, in connection.Config) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "connection_save", Description: "App-only: save the person's explicit local/remote profile without credentials. Does not retarget active sessions; restart the adapter to apply changes.", Meta: private}, func(ctx context.Context, _ *mcp.CallToolRequest, in setupSave) (*mcp.CallToolResult, any, error) {
 		c, e := s.setupController()
 		if e != nil {
 			return nil, nil, e
 		}
-		r, e := c.Save(in)
+		if !s.consumeSetupToken(in.SaveToken) {
+			return nil, nil, errors.New("connection setup save token is missing, expired or already used; reopen the setup widget and save again")
+		}
+		r, e := c.Save(connection.Config{Endpoint: in.Endpoint, Project: in.Project, Relays: in.Relays})
 		if e != nil {
 			return nil, nil, e
 		}
-		return setupResult(r), nil, nil
+		result, e := s.withSetupToken(setupResult(r))
+		return result, nil, e
 	})
 	for _, uri := range []string{setupResource, "ui://discobox/connection-v1.html"} {
 		server.AddResource(&mcp.Resource{URI: uri, Name: "Discobox connection setup", MIMEType: "text/html;profile=mcp-app"}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
@@ -124,7 +197,7 @@ func (s *Server) setupHTTP(mux *http.ServeMux) {
 			http.Error(w, "Setup assets unavailable", 503)
 			return
 		}
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src "+web.ScriptHashes(html)+"; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(html))
 	})
