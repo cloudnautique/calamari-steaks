@@ -53,13 +53,19 @@ requirements still apply. No exec-based tunnel or permission bypass is attempted
 
 ## Lifetime and limits
 
-- At most eight forwards per adapter and eight active connections per forward.
-- Reopening the same box/port reuses its active local binding after a fresh probe.
-- Each accepted connection rechecks current port metadata and box authority; a
-  changed destination identity closes the binding rather than retargeting it.
-- TCP handshake and metadata checks are bounded. Idle streams time out after
-  five minutes. Input/traffic is not retried automatically.
-- An inactive forward expires after fifteen minutes. Traffic or the visible
+- At most eight forwards per adapter. Each splices 32 connections at once;
+  up to 64 more wait 15 s for a slot instead of being reset (0.12).
+- The local port is the box's own port number when free, otherwise the address
+  this box/port had earlier in the process, otherwise any free port, so
+  bookmarks and OAuth callbacks survive a reopen.
+- Port metadata and box authority are checked when the forward opens and every
+  30 s; a connection arriving while that check is older than 30 s checks again.
+  A changed destination closes the binding rather than retargeting it; a port
+  that is briefly unreported (a restarting dev server) does not.
+- Established streams have no idle deadline (quiet WebSockets and SSE stay
+  open); TCP keepalive is on. Input/traffic is not retried automatically.
+- An inactive forward expires after fifteen minutes (two hours while it still
+  has open connections). Traffic or the visible
   Services widget renews it. Closing the widget stops its renewal but leaves a
   browser still using the forward alone. Box access is revalidated every thirty
   seconds; archive, lost scope, or failed validation closes the forward.

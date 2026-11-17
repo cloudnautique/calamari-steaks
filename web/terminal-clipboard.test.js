@@ -13,3 +13,11 @@ test('paste preserves text without adding Enter and is bounded before any transm
  assert.equal(checkedPaste('a'.repeat(MAX_PASTE_BYTES)).length,MAX_PASTE_BYTES);
  assert.throws(()=>checkedPaste('✓'.repeat(MAX_PASTE_BYTES)),/Nothing was sent/);
 });
+
+test('a bare Ctrl+V can be handed to the program', () => {
+  const ctrlV = { ctrlKey: true, key: 'v' };
+  assert.equal(clipboardShortcut(ctrlV), 'paste');
+  assert.equal(clipboardShortcut(ctrlV, { plainCtrlV: false }), undefined);
+  assert.equal(clipboardShortcut({ ctrlKey: true, shiftKey: true, key: 'V' }, { plainCtrlV: false }), 'paste');
+  assert.equal(clipboardShortcut({ metaKey: true, key: 'v' }, { plainCtrlV: false }), 'paste');
+});

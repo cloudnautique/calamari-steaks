@@ -25,7 +25,8 @@ but native macOS installation still needs testing.
 Leave the optional connection/project overrides blank for guided setup. Once
 installed, ask the assistant to **connect to Discobox**. The setup widget discovers
 the local socket or guides remote peer enrollment, tests the connection, and saves
-a private profile. Restart the adapter to apply changed settings. See
+a private profile, which applies immediately; open views keep their previous
+connection. See
 [connection-setup-widget.md](connection-setup-widget.md).
 
 Advanced overrides pin the connection and make the widget read-only. The endpoint

@@ -376,7 +376,7 @@ async function initializeRenderer() {
   terminal.onResize(updateTerminalSize);
   const observer = new ResizeObserver(scheduleFit);
   observer.observe(byId('viewport'));
-  const clipboardCleanup=installTerminalClipboard(byId('terminal'),terminal,report);
+  const clipboardCleanup=installTerminalClipboard(byId('terminal'),terminal,report,()=>({plainCtrlV:ctrlVPastes()}));
   const linksCleanup=installTerminalLinks(byId('terminal'),terminal,openExternal,report);
   rendererCleanup = () => { clipboardCleanup();linksCleanup();observer.disconnect(); terminal.dispose(); };
 }
@@ -707,6 +707,11 @@ async function refreshInbox() {
   }
 }
 byId('fit-terminal').onclick = fitTerminal;
+// Per-viewer preference: whether a bare Ctrl+V pastes (default) or reaches
+// the program. Macs paste with Cmd+V either way.
+function ctrlVPastes() { try { return localStorage.getItem('discobox.ctrlVPastes') !== 'false'; } catch { return true; } }
+byId('ctrl-v-pastes').checked = ctrlVPastes();
+byId('ctrl-v-pastes').onchange = event => { try { localStorage.setItem('discobox.ctrlVPastes', String(event.target.checked)); } catch {} };
 byId('inbox-button').onclick = () => { byId('inbox').hidden = !byId('inbox').hidden; if (!byId('inbox').hidden) refreshInbox(); };
 byId('close-inbox').onclick = () => { byId('inbox').hidden = true; approvalsView.close(); };
 byId('refresh-inbox').onclick = () => approvalsView.active?approvalsView.refresh():refreshInbox();

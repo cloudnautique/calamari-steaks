@@ -172,8 +172,9 @@ console. This adapter does not collect credential values or approve requests
 under the person's identity. Use the Discobox console's approval inbox to answer
 requests, then refresh this view.
 
-The current resource is `ui://discobox/workspace-v4.html`. Previously published
-resource URIs remain aliases so restored desktop sessions can still initialize.
+The current resource is `ui://discobox/workspace-v15.html` (see
+`docs/contract.md`). Earlier URIs are served through an unlisted template so
+restored desktop sessions can still initialize.
 
 This task-first pass was verified against the live local API in an opaque
 Chromium iframe with `connect-src 'none'`: launch, overview message and actual

@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "discobox-manager": {
+    "discobox": {
       "command": "/workspace/calamari-steaks/bin/discobox-mcp",
       "args": ["--local", "--browse"]
     }

@@ -1,6 +1,7 @@
 # Desktop in the MCP canvas
 
-`open_box_desktop(boxId)` opens the existing MCP App with Desktop selected.
+`open_box(boxId, view:"desktop")` opens the existing MCP App with Desktop
+selected (`open_box_desktop` remains with `--legacy-manager-tools`).
 The same Desktop tab is available beside Terminal and Files for either box role.
 It uses bundled noVNC 1.7.0 with a custom channel: no browser WebSocket, external
 iframe, localhost fetch, or graphics tool call by the model is needed.
@@ -12,7 +13,7 @@ The host decides where to render the app; the server cannot force host chrome.
 ## What stays private from model context
 
 Only box/project identity, view selection, connection state, and focus receipts
-are shared as app context. `open_box_desktop` returns that identity and a short
+are shared as app context. `open_box` returns that identity and a short
 status. Opening the canvas does not give the assistant vision of its desktop.
 
 The app-only `desktop_open`, `desktop_read`, and `desktop_action` tools return

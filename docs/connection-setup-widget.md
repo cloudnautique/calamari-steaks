@@ -47,11 +47,17 @@ under `os.UserConfigDir()/discobox-mcp/connection.json`. The identity remains in
 `discobox-mcp/iroh/id_ed25519`, outside the extension bundle. `--connection-config`
 and `--iroh-identity` can set explicit locations.
 
-**Restart the adapter to apply a changed profile.** Disable/re-enable its desktop
-extension or restart the client's MCP connection. Saving does not retarget a
-terminal, desktop, approval review or file view. The setup widget says when restart
-is required. `connection_status` reports the last explicit test, not live health.
-Testing a draft does not declare the currently active connection healthy.
+**Saving applies a changed profile immediately (0.12).** In the default
+`--browse` mode the adapter builds a new connection, diagnoses it, reads the
+project catalog and only then uses it for new requests. Open terminals,
+desktops, forwards and uploads stay on the previous connection until they
+close; pending approval reviews must be reopened. If the new connection fails,
+the profile stays saved and the widget shows which layer failed. Single-box
+(`--box`) launchers still need a restart, and the widget says so.
+`connection_status` reports the last test and when real backend traffic last
+succeeded or failed. Testing a draft does not declare the active connection
+healthy. Tests show each layer: address, native library, relay, peer,
+admission and server. See `docs/adr/0003-connection-generations.md`.
 
 Nonempty `--discobox`/`DISCOBOX_MCP_ENDPOINT`, an explicit project override, or
 `--local` pin the connection to its launcher. The widget then displays read-only
@@ -78,7 +84,7 @@ can wait for the backend; the MCPB and ordinary default startup use browse mode.
 
 Text-only clients can read the instructions/public ID, test the active target,
 and set launcher settings or edit the documented profile, then restart. The widget
-is served as `ui://discobox/connection-v2.html` (the v1 alias remains readable) and uses only the MCP Apps bridge.
+is served as `ui://discobox/connection-v3.html` (v1 and v2 remain readable) and uses only the MCP Apps bridge.
 No browser fetch of a socket or Iroh connection is attempted. Direct connection
 probes run in short-lived subprocesses, keeping global Iroh transport configuration
 isolated from live sessions. No failed probe, input, or enrollment is retried.

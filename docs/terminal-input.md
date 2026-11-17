@@ -51,7 +51,8 @@ has terminal/desktop control, is editing a field, or has the paste dialog open.
 It selects a view without focusing an input or sending any keyboard/mouse input.
 The terminal renderer is mounted inert to suppress its startup autofocus.
 
-`show_box_view(boxId, view, filePath?)` provides the server-tool fallback and
+`open_box(boxId, view, filePath?)` provides the server-tool fallback (formerly
+`show_box_view`, still served with `--legacy-manager-tools`) and
 links to the same MCP App resource. The host decides whether to reuse a widget
 or open another one. Consequently a successful server tool is a view request,
 not proof that a particular existing canvas changed. Model context includes
