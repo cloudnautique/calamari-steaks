@@ -27,6 +27,7 @@ type Server struct {
 	serviceMu        sync.Mutex
 	serviceForwards  map[string]*serviceForward
 	serviceClosed    []forwardInfo
+	forwardPorts     map[forwardKey]string
 	Client           *discobox.Client
 	Onboarding       *connection.Controller
 	Origin           string
@@ -71,6 +72,7 @@ func New(client *discobox.Client, origin string, extraOrigins []string, accessTo
 	s.desktops = make(map[string]*desktopSession)
 	s.evictedTerminals = make(map[string]string)
 	s.serviceForwards = make(map[string]*serviceForward)
+	s.forwardPorts = make(map[forwardKey]string)
 	s.serviceOpenSlots = make(chan struct{}, 8)
 	if client != nil && client.Session.Box != "" {
 		s.managers[client.Session.Box] = newManagerConnection(client)

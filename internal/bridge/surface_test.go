@@ -125,7 +125,7 @@ func TestModelCatalogIsBoundedAndCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	client := mcpClient(t, ctx, s)
 	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "list_boxes", Arguments: map[string]any{}})

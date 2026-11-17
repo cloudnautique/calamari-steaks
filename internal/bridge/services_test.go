@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +21,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+var fixtureBoxReads atomic.Int32
+
 func serviceFixture(t *testing.T, deny bool, target ...string) (*Server, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 	network := testhttp.NewNetwork(t)
@@ -27,6 +30,7 @@ func serviceFixture(t *testing.T, deny bool, target ...string) (*Server, *atomic
 	backend := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/projects/p/sandboxes/box":
+			fixtureBoxReads.Add(1)
 			json.NewEncoder(w).Encode(map[string]any{"id": "box", "projectId": "p", "runtime": map[string]any{"desiredState": "present", "agentStatus": map[string]any{"ports": []any{map[string]any{"port": 8080, "protocol": "http", "serviceId": "web.app", "serviceName": "Fixture web", "addresses": []string{"127.0.0.1"}}, map[string]any{"port": 5353, "protocol": "udp"}}}}})
 		case "/api/projects/p/sandboxes/box/services":
 			w.Write([]byte(`{"services":[{"id":"web.app","name":"Fixture web","status":"running","ports":[8080]}]}`))
@@ -304,5 +308,67 @@ func TestForwardHTTPStreamingAndWebSocket(t *testing.T) {
 	_, data, e = ws.Read(ctx)
 	if e != nil || string(data) != "fixture socket" {
 		t.Fatalf("WebSocket failed %q %v", data, e)
+	}
+}
+
+func TestForwardHandlesBrowserParallelismWithoutPerConnectionReads(t *testing.T) {
+	s, _, _ := serviceFixture(t, false)
+	ctx := context.Background()
+	info, e := s.openForward(ctx, serviceInput{BoxID: "box", Port: 8080})
+	if e != nil {
+		t.Fatal(e)
+	}
+	before := fixtureBoxReads.Load()
+	var failures atomic.Int32
+	echo := func(i int) net.Conn {
+		conn, e := net.Dial("tcp", info.Address)
+		if e != nil {
+			failures.Add(1)
+			return nil
+		}
+		conn.SetDeadline(time.Now().Add(10 * time.Second))
+		message := []byte(fmt.Sprintf("request-%02d", i))
+		conn.Write(message)
+		reply := make([]byte, len(message))
+		if _, e := io.ReadFull(conn, reply); e != nil || string(reply) != string(message) {
+			failures.Add(1)
+		}
+		return conn
+	}
+	// Thirty connections stay open, like keep-alive and live-reload sockets.
+	held := make([]net.Conn, 30)
+	var group sync.WaitGroup
+	for i := range held {
+		group.Add(1)
+		go func() { defer group.Done(); held[i] = echo(i) }()
+	}
+	group.Wait()
+	// Forty more short requests arrive at once; those beyond the free slots
+	// wait in the queue instead of being reset.
+	for i := range 40 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if conn := echo(100 + i); conn != nil {
+				conn.Close()
+			}
+		}()
+	}
+	group.Wait()
+	for _, conn := range held {
+		if conn != nil {
+			conn.Close()
+		}
+	}
+	if failures.Load() != 0 {
+		t.Fatalf("%d of 70 connections failed", failures.Load())
+	}
+	if reads := fixtureBoxReads.Load() - before; reads > 2 {
+		t.Fatalf("catalog read %d times for 70 connections", reads)
+	}
+	s.closeForward(info.ID)
+	reopened, e := s.openForward(ctx, serviceInput{BoxID: "box", Port: 8080})
+	if e != nil || reopened.Address != info.Address {
+		t.Fatalf("reopen moved the forward: %s -> %s %v", info.Address, reopened.Address, e)
 	}
 }

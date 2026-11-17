@@ -193,12 +193,15 @@ func (c *Client) ServiceLogs(ctx context.Context, id, parent, sid string) (map[s
 	}
 	return map[string]any{"boxId": id, "serviceId": sid, "text": strings.ToValidUTF8(text, "�"), "truncated": truncated, "untrusted": true}, nil
 }
-func (c *Client) DialServicePort(ctx context.Context, id, parent string, port int) (net.Conn, ServicePort, error) {
+
+// ResolveServicePort finds the box's currently reported TCP listener for a
+// port, after checking access and lifecycle. It does not dial.
+func (c *Client) ResolveServicePort(ctx context.Context, id, parent string, port int) (ServicePort, error) {
 	check, cancel := context.WithTimeout(ctx, serviceDialTimeout)
 	catalog, e := c.Services(check, id, parent)
 	cancel()
 	if e != nil {
-		return nil, ServicePort{}, e
+		return ServicePort{}, e
 	}
 	var match *ServicePort
 	for _, candidate := range catalog.Ports {
@@ -206,14 +209,31 @@ func (c *Client) DialServicePort(ctx context.Context, id, parent string, port in
 			continue
 		}
 		if match != nil && (match.Host != candidate.Host || match.Protocol != candidate.Protocol) {
-			return nil, ServicePort{}, errors.New("ambiguous reported port; choose a single TCP listener")
+			return ServicePort{}, errors.New("ambiguous reported port; choose a single TCP listener")
 		}
 		copy := candidate
 		match = &copy
 	}
 	if match == nil {
-		return nil, ServicePort{}, errors.New("port is not currently reported or declared as TCP in this box")
+		return ServicePort{}, ErrPortNotReported
+	}
+	return *match, nil
+}
+
+// ErrPortNotReported means the box does not currently report the port.
+var ErrPortNotReported = errors.New("port is not currently reported or declared as TCP in this box")
+
+// DialResolvedPort opens a tunnel to a port previously returned by
+// ResolveServicePort, without reading the catalog again.
+func (c *Client) DialResolvedPort(ctx context.Context, id string, target ServicePort) (net.Conn, error) {
+	return c.dialTCP(ctx, id, target.Host, target.Port)
+}
+
+func (c *Client) DialServicePort(ctx context.Context, id, parent string, port int) (net.Conn, ServicePort, error) {
+	match, e := c.ResolveServicePort(ctx, id, parent, port)
+	if e != nil {
+		return nil, ServicePort{}, e
 	}
 	conn, e := c.dialTCP(ctx, id, match.Host, port)
-	return conn, *match, e
+	return conn, match, e
 }
