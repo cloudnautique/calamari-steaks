@@ -20,7 +20,7 @@
         <div class="launch-fields"><div><label for="manager-name">Box name <small>(optional)</small></label><input id="manager-name" placeholder="release-review" maxlength="64" pattern="[A-Za-z0-9_-]+"></div><div><label for="harness">Harness</label><input id="harness" placeholder="Project default" maxlength="128" list="harness-examples"><datalist id="harness-examples"><option value="codex"><option value="claude"></datalist></div></div>
         <details><summary>Configure this run</summary><p class="muted">Applies only to this box. Saved harness defaults stay unchanged.</p><div class="launch-fields"><div><label for="model">Model override</label><input id="model" placeholder="Harness default" maxlength="128"></div><div><label for="pool">Pool ID</label><input id="pool" placeholder="Project default" maxlength="128"></div></div></details>
         <p class="muted">Starts with an empty workspace. Repository source delivery is not available in this launcher yet. Uses the harness's configured access; does not grant Discobox API access or add credential bindings.</p>
-        <button id="create-button" type="button" class="primary">Start box</button><p id="creation-intent" class="muted" hidden></p>
+        <button id="create-button" type="button" class="primary">Start box</button><button id="discard-creation" type="button" hidden>Discard this request and edit</button><p id="creation-intent" class="muted" hidden></p>
       </div>
       </details>
       <div class="browser-heading"><h2>Your boxes</h2><label class="muted"><input id="show-archived" type="checkbox"> Show archived</label></div>

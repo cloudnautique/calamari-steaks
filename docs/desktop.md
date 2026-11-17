@@ -61,7 +61,8 @@ never retried. A second view cannot take an existing controller's lease.
 
 The adapter enforces that ownership on the server, not only in the canvas. It
 parses the RFB client stream per view: handshake bytes and viewer messages
-(pixel format, encodings, update requests, continuous updates, fences) always
+(pixel format, encodings, update requests, continuous updates, fences, and the
+extended clipboard capabilities announcement noVNC sends on connect) always
 pass, while keyboard, pointer, clipboard, desktop-size, XVP and QEMU key events
 are delivered only while that view holds the box's input claim, checked under
 the same lock that transfers it. Input from a view without the claim is dropped.

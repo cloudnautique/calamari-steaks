@@ -26,12 +26,13 @@ and archiving remain subject to current parent and egress permissions.
 ```
 
 `--browse` starts the picker without creating a manager. The adapter remains
-usable when every manager is archived or when no manager exists. Omitting it
-preserves startup discovery/reuse/creation, and `--box` still pins an explicit
-startup default. `examples/mcp-local.json` launches the workspace over stdio.
+usable when every manager is archived or when no manager exists. It is the
+default: omitting it still starts the picker unless `--box`, `--manager-state`,
+`--harness` or `--pool` is given. Startup discovery/reuse/creation requires
+`--browse=false`, and `--box` still pins an explicit startup default. `examples/mcp-local.json` launches the workspace over stdio.
 
 For an existing HTTP client connection, reload MCP discovery after upgrading
-so the client sees the new tools and `ui://discobox/managers-v3.html` resource.
+so the client sees the new tools and `ui://discobox/workspace-v16.html` resource.
 Previously published terminal resource URIs remain readable.
 
 ## Text and UI operations
@@ -172,7 +173,7 @@ console. This adapter does not collect credential values or approve requests
 under the person's identity. Use the Discobox console's approval inbox to answer
 requests, then refresh this view.
 
-The current resource is `ui://discobox/workspace-v15.html` (see
+The current resource is `ui://discobox/workspace-v16.html` (see
 `docs/contract.md`). Earlier URIs are served through an unlisted template so
 restored desktop sessions can still initialize.
 

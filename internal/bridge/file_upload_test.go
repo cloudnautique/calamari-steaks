@@ -152,6 +152,104 @@ func TestPrivateUploadOrderingPermissionsAndCleanup(t *testing.T) {
 	}
 }
 
+// A commit in flight must not hold a lock that cancel, begin, expiry or
+// shutdown cleanup need; a host that times out finish sends cancel.
+func TestUploadCommitDoesNotStallOtherUploads(t *testing.T) {
+	network := testhttp.NewNetwork(t)
+	committing := make(chan struct{})
+	release := make(chan struct{})
+	backend := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/projects/p/sandboxes/box":
+			io.WriteString(w, `{"id":"box","parentSandboxId":"caller","runtime":{"desiredState":"present"}}`)
+		case "/api/projects/p/sandboxes/box/files/content":
+			io.ReadAll(r.Body)
+			close(committing)
+			<-release
+			json.NewEncoder(w).Encode(map[string]any{"path": "/workspace/a.txt", "name": "a.txt", "type": "file", "size": 1, "version": "v1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+	defer close(release)
+	client, _ := discobox.NewCatalog(backend.URL, "fixture", "p")
+	s, _ := New(client, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{Parent: "caller"})
+	t.Cleanup(s.CloseFileUploads)
+	ctx := context.Background()
+	begun, e := s.uploadFile(ctx, uploadInput{Action: "begin", BoxID: "box", Path: "/workspace/a.txt", Size: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	id := begun["uploadId"].(string)
+	if _, e := s.uploadFile(ctx, uploadInput{Action: "chunk", UploadID: id, Data: base64.StdEncoding.EncodeToString([]byte("a"))}); e != nil {
+		t.Fatal(e)
+	}
+	finished := make(chan error, 1)
+	go func() {
+		_, e := s.uploadFile(ctx, uploadInput{Action: "finish", UploadID: id})
+		finished <- e
+	}()
+	<-committing
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.uploadFile(ctx, uploadInput{Action: "cancel", UploadID: id})
+		if _, e := s.uploadFile(ctx, uploadInput{Action: "begin", BoxID: "box", Path: "/workspace/b.txt", Size: 1}); e != nil {
+			t.Error("begin during commit:", e)
+		}
+		s.CloseFileUploads()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel, begin or cleanup stalled behind an in-flight commit")
+	}
+	release <- struct{}{}
+	if e := <-finished; e != nil {
+		t.Fatal("commit failed:", e)
+	}
+}
+
+// Regression for SECURITY-REVIEW.md H10: staging files left by a crash are
+// swept, while fresh uploads, other files and symlinks are left alone.
+func TestSweepStaleUploads(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Now().Add(-2 * time.Hour)
+	write := func(name string, modified time.Time) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	stale := write(uploadPrefix+"stale", old)
+	fresh := write(uploadPrefix+"fresh", time.Now())
+	other := write("unrelated-file", old)
+	target := write("symlink-target", old)
+	link := filepath.Join(dir, uploadPrefix+"link")
+	linked := os.Symlink(target, link) == nil
+	if removed := SweepStaleUploads(dir, time.Hour); removed != 1 {
+		t.Fatalf("removed %d files, want 1", removed)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatal("stale staging file survived")
+	}
+	for _, path := range []string{fresh, other, target} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s was removed", path)
+		}
+	}
+	if linked {
+		if _, err := os.Lstat(link); err != nil {
+			t.Fatal("symlink was removed")
+		}
+	}
+}
+
 func TestVersionCheckedReplaceAndNewFolder(t *testing.T) {
 	network := testhttp.NewNetwork(t)
 	current := "v1"
@@ -213,44 +311,5 @@ func TestVersionCheckedReplaceAndNewFolder(t *testing.T) {
 	result, text := callTool(t, ctx, mcp, "file_mkdir", map[string]any{"boxId": "box", "path": "/workspace/new/sub"})
 	if result.IsError || mkdirs.Load() != 1 {
 		t.Fatalf("mkdir: %s", text)
-	}
-}
-
-// Regression for SECURITY-REVIEW.md H10: staging files left by a crash are
-// swept, while fresh uploads, other files and symlinks are left alone.
-func TestSweepStaleUploads(t *testing.T) {
-	dir := t.TempDir()
-	old := time.Now().Add(-2 * time.Hour)
-	write := func(name string, modified time.Time) string {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(path, modified, modified); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	stale := write(uploadPrefix+"stale", old)
-	fresh := write(uploadPrefix+"fresh", time.Now())
-	other := write("unrelated-file", old)
-	target := write("symlink-target", old)
-	link := filepath.Join(dir, uploadPrefix+"link")
-	linked := os.Symlink(target, link) == nil
-	if removed := SweepStaleUploads(dir, time.Hour); removed != 1 {
-		t.Fatalf("removed %d files, want 1", removed)
-	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatal("stale staging file survived")
-	}
-	for _, path := range []string{fresh, other, target} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("%s was removed", path)
-		}
-	}
-	if linked {
-		if _, err := os.Lstat(link); err != nil {
-			t.Fatal("symlink was removed")
-		}
 	}
 }

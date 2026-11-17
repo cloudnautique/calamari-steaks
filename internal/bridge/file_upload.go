@@ -167,37 +167,40 @@ func (s *Server) uploadFile(ctx context.Context, in uploadInput) (map[string]any
 		u.timer.Reset(5 * time.Minute)
 		return map[string]any{"offset": u.offset}, nil
 	}
-	if in.Action != "finish" || u.offset != u.size {
-		u.mu.Unlock()
-		return nil, errors.New("upload is incomplete or action is invalid")
+	u.mu.Unlock()
+	if in.Action != "finish" {
+		return nil, errors.New("upload action is invalid")
 	}
-	// Mark consumed before network I/O; uncertain commits are never replayed.
+	// Detach before network I/O, in removeUpload's lock order, so nothing is
+	// held during the commit: a concurrent cancel, the expiry timer and
+	// shutdown cleanup no longer find this upload and cannot stall behind it.
+	// Marked consumed first; uncertain commits are never replayed.
+	s.uploadMu.Lock()
+	u.mu.Lock()
+	if s.uploads[in.UploadID] != u || u.closed || u.offset != u.size {
+		u.mu.Unlock()
+		s.uploadMu.Unlock()
+		return nil, errors.New("upload is incomplete or closed")
+	}
+	delete(s.uploads, in.UploadID)
 	u.closed = true
 	u.timer.Stop()
-	_, err := u.file.Seek(0, 0)
-	if err == nil {
-		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
-		info, e := u.client.WriteFileWith(ctx, u.box, s.managerOptions.Parent, u.path, u.file, u.size, u.options)
-		err = e
-		u.mu.Unlock()
-		s.uploadMu.Lock()
-		if s.uploads[in.UploadID] == u {
-			s.removeUpload(in.UploadID, u)
-		}
-		s.uploadMu.Unlock()
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"file": info}, nil
-	}
 	u.mu.Unlock()
-	s.uploadMu.Lock()
-	if s.uploads[in.UploadID] == u {
-		s.removeUpload(in.UploadID, u)
-	}
 	s.uploadMu.Unlock()
-	return nil, errors.New("could not read staged upload")
+	defer func() {
+		u.file.Close()
+		os.Remove(u.file.Name())
+	}()
+	if _, err := u.file.Seek(0, 0); err != nil {
+		return nil, errors.New("could not read staged upload")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	info, err := u.client.WriteFileWith(ctx, u.box, s.managerOptions.Parent, u.path, u.file, u.size, u.options)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"file": info}, nil
 }
 
 type mkdirInput struct {

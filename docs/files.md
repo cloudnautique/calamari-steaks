@@ -53,8 +53,8 @@ Resources/downloads through this adapter have a 1 MiB limit. Larger files use
 explicit byte ranges with the read tool. The preview loads 256 KiB initially,
 then offers Load more up to 1 MiB. Changed versions during a read are rejected
 rather than mixing content; open previews check their version every five
-seconds while visible. Uploads, edits, recursive transfers, and delete/rename
-are not implemented.
+seconds while visible. Private uploads of new files are described below; edits,
+recursive transfers, and delete/rename are not implemented.
 
 A generic MCP resource link identifies content; the host determines what clicking
 it does. `open_box_file` explicitly opens our MCP App viewer when supported.
@@ -85,8 +85,10 @@ views do not resize the terminal. Focus still governs who may type.
 
 The opaque canvas iframe never fetches localhost or Discobox directly. It calls
 MCP tools through the host bridge, as the terminal does. The standalone page uses
-the same authenticated methods at `/api/files/list`, `/api/files/read`, and
-`/api/files/stat`. All operations are GETs upstream. File bodies are never used
+the same authenticated methods at `/api/files/list`, `/api/files/read`,
+`/api/files/stat`, and `/api/files/upload`. Reads are GETs upstream; an upload
+commits once with `PUT /files/content?ifExists=fail`, so it never replaces an
+existing file. File bodies are never used
 as instructions or sent to another box.
 
 ## Verification

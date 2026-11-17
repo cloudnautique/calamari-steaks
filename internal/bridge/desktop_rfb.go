@@ -28,6 +28,11 @@ const (
 	rfbMessages
 )
 
+// rfbClipboardCaps is the extended clipboard caps action flag. A message
+// carrying it announces capabilities; its other action bits list what the
+// client supports rather than asking for anything.
+const rfbClipboardCaps = 1 << 24
+
 // rfbPending bounds a partially received message (mostly large clipboard text).
 const rfbPending = 1 << 20
 
@@ -134,11 +139,23 @@ func (f *rfbFilter) next(data []byte) (int, bool, error) {
 			return 0, true, nil
 		}
 		length := int64(int32(binary.BigEndian.Uint32(data[4:8])))
-		if length < 0 {
+		extended := length < 0
+		if extended {
 			length = -length
 		}
 		if length > rfbPending-8 {
 			return 0, true, errors.New("desktop clipboard exceeds its bound")
+		}
+		// An extended clipboard capabilities announcement is negotiation, not
+		// input: noVNC sends it on connect, while every view is still a viewer,
+		// with the caps flag plus every action it supports. Dropping it would
+		// leave the view that later takes control without clipboard.
+		if extended && length >= 4 {
+			if len(data) < 12 {
+				return 0, true, nil
+			}
+			caps := binary.BigEndian.Uint32(data[8:12])&rfbClipboardCaps != 0
+			return need(8 + int(length)), !caps, nil
 		}
 		return need(8 + int(length)), true, nil
 	case 250: // XVP (shutdown/reboot/reset)

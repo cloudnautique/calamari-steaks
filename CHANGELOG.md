@@ -21,6 +21,7 @@ Follows the design review in `DESIGN-REVIEW.md` (findings F1–F15).
   `--box`/manager launchers).
 - New `control_box` (start, stop, restart, restore).
 - `send_box` refused by human focus returns `human_has_control` with a time.
+- Workspace resource is now `workspace-v16` (earlier bundles stay readable).
 - Server name is now `discobox`; instructions shrank from 4.6 KB to 1.5 KB;
   `resources/list` lists one workspace and one setup resource.
 
