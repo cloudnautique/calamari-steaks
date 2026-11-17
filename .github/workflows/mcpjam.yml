@@ -63,10 +63,13 @@ jobs:
             --iroh-identity "$RUNNER_TEMP/mcpjam/unused-identity.pem"
           SH
           chmod 700 "$RUNNER_TEMP/mcpjam/adapter-stdio"
-      - name: Install pinned MCPJam tools outside the repository
+      # Install outside the repository from the committed lockfile, so every
+      # transitive dependency is pinned by integrity hash.
+      - name: Install locked MCPJam tools outside the repository
         run: |
-          npm install --prefix "$RUNNER_TEMP/mcpjam/tools" --save-exact --no-audit --no-fund \
-            @mcpjam/cli@6.2.2 @mcpjam/sdk@10.7.0
+          mkdir -p "$RUNNER_TEMP/mcpjam/tools"
+          cp ci/mcpjam/package.json ci/mcpjam/package-lock.json "$RUNNER_TEMP/mcpjam/tools/"
+          npm ci --prefix "$RUNNER_TEMP/mcpjam/tools" --no-audit --no-fund
       - name: Check initialization and discovery
         run: |
           "$RUNNER_TEMP/mcpjam/tools/node_modules/.bin/mcpjam" server doctor \

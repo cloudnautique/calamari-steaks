@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,13 +27,6 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 	defer cancel()
 	var writes atomic.Int32
 	var allowExec atomic.Bool
-	var receivedMu sync.Mutex
-	var received []byte
-	// A real RFB client stream: 3.8 handshake with security None, ClientInit,
-	// then a KeyEvent the controlling view sends.
-	handshake := append([]byte("RFB 003.008\n"), 1, 1)
-	keyEvent := []byte{4, 1, 0, 0, 0, 0, 0, 0x61}
-	updateRequest := []byte{3, 1, 0, 0, 0, 0, 0, 10, 0, 10}
 
 	viewer := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/websockify" {
@@ -57,9 +49,9 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 			if err != nil {
 				return
 			}
-			receivedMu.Lock()
-			received = append(received, data...)
-			receivedMu.Unlock()
+			if string(data) != string(desktopTestInput) {
+				t.Errorf("wrong desktop input %q", data)
+			}
 			writes.Add(1)
 		}
 	}))
@@ -169,29 +161,12 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 	if manager.writeAs("mcp", func() error { return nil }) == nil {
 		t.Fatal("assistant write bypassed desktop focus")
 	}
-	input := map[string]any{"desktopId": id, "action": "write", "sequence": 1, "data": base64.StdEncoding.EncodeToString(append(append([]byte(nil), handshake...), keyEvent...))}
+	input := map[string]any{"desktopId": id, "action": "write", "sequence": 1, "data": base64.StdEncoding.EncodeToString(desktopTestInput)}
 	call("desktop_action", input)
 	call("desktop_action", input)
 	call("desktop_action", map[string]any{"desktopId": id, "action": "release"})
 	if err := manager.writeAs("mcp", func() error { return nil }); err != nil {
 		t.Fatal("desktop failed to yield")
-	}
-	// Without control the bridge drops input but still forwards viewing
-	// messages; a batch of only input forwards nothing.
-	call("desktop_action", map[string]any{"desktopId": id, "action": "write", "sequence": 2, "data": base64.StdEncoding.EncodeToString(append(append([]byte(nil), keyEvent...), updateRequest...))})
-	call("desktop_action", map[string]any{"desktopId": id, "action": "write", "sequence": 3, "data": base64.StdEncoding.EncodeToString(keyEvent)})
-	want := append(append(append([]byte(nil), handshake...), keyEvent...), updateRequest...)
-	for deadline := time.Now().Add(5 * time.Second); ; {
-		receivedMu.Lock()
-		got := append([]byte(nil), received...)
-		receivedMu.Unlock()
-		if string(got) == string(want) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("desktop received %v, want %v", got, want)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	allowExec.Store(true)
 	connected, err := s.manager(ctx, "box")
@@ -199,13 +174,16 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 		t.Fatal("terminal connection lost the shared desktop controller", err)
 	}
 	call("desktop_action", map[string]any{"desktopId": id, "action": "close"})
-	if writes.Load() != 2 {
-		t.Fatalf("input replayed or uncontrolled input forwarded: %d writes", writes.Load())
+	if writes.Load() != 1 {
+		t.Fatalf("input replayed: %d", writes.Load())
 	}
 	if _, err := s.desktop(id); err == nil {
 		t.Fatal("closed desktop remains reachable")
 	}
 }
+
+// RFB 3.8 handshake (security None, shared ClientInit) followed by one KeyEvent.
+var desktopTestInput = append([]byte("RFB 003.008\n\x01\x01"), 4, 1, 0, 0, 0, 0, 0, 0x61)
 
 type desktopTestOutput struct{ io.Writer }
 

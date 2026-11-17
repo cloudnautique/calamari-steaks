@@ -32,14 +32,15 @@ Checks for later reviews of this repository, left by earlier reviews and fixes.
   docs that name the current resource (`docs/connection.md`,
   `docs/managers.md`) in the same change.
 - Keep desktop input ownership enforced in the bridge
-  (`internal/bridge/rfb_filter.go`), not only by the widget's noVNC view-only
+  (`internal/bridge/desktop_rfb.go`), not only by the widget's noVNC view-only
   mode: a caller that bypasses the widget otherwise types into a desktop
   another view controls, which the docs promise cannot happen. A new RFB client
-  message or encoding noVNC starts sending must be framed there, with input
-  messages dropped for views without control; one the filter does not know
-  closes the desktop, so test a noVNC upgrade against it. Never let a
-  pseudo-encoding through that changes a client message's length based on
-  server state, as ExtendedMouseButtons does.
+  message noVNC starts sending must be framed there, with input messages
+  dropped for views without control; one the filter does not know closes the
+  desktop, so test a noVNC upgrade against it. Classify negotiation as viewing,
+  not input: every view connects as a viewer, so a dropped negotiation message
+  (such as the extended clipboard caps reply) is lost for the view that later
+  takes control.
 - In generated shell (for example the mcpjam wrapper in
   `.github/workflows/mcpjam.yml`), expand runner paths when the file is written.
   MCP stdio clients often launch servers with a reduced environment, so

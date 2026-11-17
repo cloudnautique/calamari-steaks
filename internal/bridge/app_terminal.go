@@ -53,9 +53,17 @@ type terminalAction struct {
 	Rows       int    `json:"rows,omitempty"`
 }
 
+// terminalResult keeps the view handle and terminal bytes in _meta, which the
+// host delivers to the app but not to model context. A terminalId is an input
+// capability for a human view, so it MUST NOT appear in content or
+// structuredContent (go-sdk would also mirror structuredContent into text).
+func terminalResult(data map[string]any) *mcp.CallToolResult {
+	return &mcp.CallToolResult{Meta: mcp.Meta{"terminal": data}, Content: []mcp.Content{&mcp.TextContent{Text: "Terminal transport response for the app only."}}}
+}
+
 func (s *Server) appTools(server *mcp.Server) {
 	appOnly := mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_open", Description: "Attach an MCP App view to the pinned terminal. Does not create or replace a manager.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_open", Description: "Attach an MCP App view to the pinned terminal. Does not create or replace a manager.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input managerInput) (*mcp.CallToolResult, any, error) {
 		manager, err := s.manager(ctx, input.ManagerID)
 		if err != nil {
 			return nil, nil, err
@@ -104,9 +112,9 @@ func (s *Server) appTools(server *mcp.Server) {
 			stream.Close()
 			return nil, nil, err
 		}
-		return nil, map[string]any{"terminalId": id, "session": manager.Client.Session, "cols": screen["cols"], "rows": screen["rows"], "cursor": 0}, nil
+		return terminalResult(map[string]any{"terminalId": id, "session": manager.Client.Session, "cols": screen["cols"], "rows": screen["rows"], "cursor": 0}), nil, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_read", Description: "Read terminal bytes through the MCP App bridge from a cursor. May wait up to 12 seconds; safe to repeat a read.", Meta: appOnly, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalRead) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_read", Description: "Read terminal bytes through the MCP App bridge from a cursor. May wait up to 12 seconds; safe to repeat a read.", Meta: appOnly, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalRead) (*mcp.CallToolResult, any, error) {
 		view, err := s.appTerminal(input.TerminalID)
 		if err != nil {
 			return nil, nil, err
@@ -135,18 +143,18 @@ func (s *Server) appTools(server *mcp.Server) {
 			done, wake, latest, ended := view.done, view.wake, view.cursor, view.sessionEnded
 			view.mu.Unlock()
 			if len(chunks) > 0 || done {
-				return nil, map[string]any{"chunks": chunks, "cursor": cursor, "closed": done && cursor == latest, "ended": ended}, nil
+				return terminalResult(map[string]any{"chunks": chunks, "cursor": cursor, "closed": done && cursor == latest, "ended": ended}), nil, nil
 			}
 			select {
 			case <-ctx.Done():
 				return nil, nil, ctx.Err()
 			case <-hold.C:
-				return nil, map[string]any{"chunks": chunks, "cursor": cursor, "closed": false}, nil
+				return terminalResult(map[string]any{"chunks": chunks, "cursor": cursor, "closed": false}), nil, nil
 			case <-wake:
 			}
 		}
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "terminal_action", Description: "MCP App terminal ownership, input, resize and detach. Never retry input whose outcome is uncertain.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalAction) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "terminal_action", Description: "MCP App terminal ownership, input, resize and detach. Never retry input whose outcome is uncertain.", Meta: appOnly}, func(ctx context.Context, _ *mcp.CallToolRequest, input terminalAction) (*mcp.CallToolResult, any, error) {
 		view, err := s.appTerminal(input.TerminalID)
 		if err != nil {
 			return nil, nil, err
@@ -176,11 +184,17 @@ func (s *Server) appTools(server *mcp.Server) {
 				}
 				return view.stream.Write(discobox.Repaint, nil)
 			})
-			return nil, map[string]any{"ok": resizeErr == nil, "resized": resized}, resizeErr
+			if resizeErr != nil {
+				return nil, nil, resizeErr
+			}
+			return terminalResult(map[string]any{"ok": true, "resized": resized}), nil, nil
 		default:
 			err = fmt.Errorf("unknown terminal action")
 		}
-		return nil, map[string]any{"ok": err == nil}, err
+		if err != nil {
+			return nil, nil, err
+		}
+		return terminalResult(map[string]any{"ok": true}), nil, nil
 	})
 }
 

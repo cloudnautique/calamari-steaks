@@ -47,9 +47,38 @@ func TestSetupAvailableWithNoBackend(t *testing.T) {
 	if e == nil {
 		t.Fatal("ungated file resource")
 	}
-	result, e = client.CallTool(ctx, &mcp.CallToolParams{Name: "connection_save", Arguments: map[string]any{"endpoint": "unix:///tmp/fixture.sock", "project": "default"}})
-	if e != nil || result.IsError {
-		t.Fatalf("save unavailable: %v %+v", e, result)
+	// Regression for SECURITY-REVIEW.md H4: saving needs the widget's private,
+	// single-use token; it never appears in model-visible output.
+	save := func(token string) *mcp.CallToolResult {
+		t.Helper()
+		result, e := client.CallTool(ctx, &mcp.CallToolParams{Name: "connection_save", Arguments: map[string]any{"endpoint": "unix:///tmp/fixture.sock", "project": "default", "saveToken": token}})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return result
+	}
+	if save("").IsError != true || save("guessed").IsError != true {
+		t.Fatal("connection_save accepted a missing or forged token")
+	}
+	status, e := client.CallTool(ctx, &mcp.CallToolParams{Name: "connection_status", Arguments: map[string]any{}})
+	if e != nil || status.IsError {
+		t.Fatal(e, status)
+	}
+	setup, _ := status.Meta["setup"].(map[string]any)
+	token, _ := setup["saveToken"].(string)
+	if token == "" {
+		t.Fatal("status did not deliver a private save token")
+	}
+	visible, _ := json.Marshal(map[string]any{"content": status.Content, "structured": status.StructuredContent})
+	if strings.Contains(string(visible), token) {
+		t.Fatal("save token leaked into model-visible output")
+	}
+	result = save(token)
+	if result.IsError {
+		t.Fatalf("save unavailable: %+v", result)
+	}
+	if !save(token).IsError {
+		t.Fatal("save token was reusable")
 	}
 	raw, _ := json.Marshal(result.Content)
 	if strings.Contains(string(raw), "fixture.sock") {

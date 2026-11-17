@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -98,10 +97,7 @@ func TestAppTerminalDeliversNewOutputWithoutScreenRefresh(t *testing.T) {
 				if err != nil || result.IsError {
 					t.Fatalf("%s: %v %v", name, result, err)
 				}
-				data, _ := json.Marshal(result.StructuredContent)
-				var value map[string]any
-				json.Unmarshal(data, &value)
-				return value
+				return toolData(result)
 			}
 			id := call("terminal_open", map[string]any{})["terminalId"].(string)
 			defer bridge.closeAppTerminal(id)
@@ -117,10 +113,7 @@ func TestAppTerminalDeliversNewOutputWithoutScreenRefresh(t *testing.T) {
 					arrived <- response{err: err}
 					return
 				}
-				encoded, _ := json.Marshal(result.StructuredContent)
-				var value map[string]any
-				json.Unmarshal(encoded, &value)
-				arrived <- response{data: value}
+				arrived <- response{data: toolData(result)}
 			}()
 			close(emit)
 			var fresh map[string]any
