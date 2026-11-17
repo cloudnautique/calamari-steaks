@@ -1,7 +1,7 @@
 import {uploadFile} from './file-upload.js';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
-import {FilesModel,parentDirectory,resolveFileLink} from './files-model.js';
+import {FilesModel,MARKDOWN_URI_PATTERN,parentDirectory,resolveFileLink} from './files-model.js';
 const $=id=>document.getElementById(id);
 const allowedTags=['h1','h2','h3','h4','h5','h6','p','a','strong','em','del','ul','ol','li','pre','code','blockquote','table','thead','tbody','tr','th','td','hr','br','details','summary'];
 export class FilesView {
@@ -39,6 +39,9 @@ export class FilesView {
     };
     $('file-download').onclick=()=>this.perform(()=>this.download(this.model.state.file));
     $('file-copy').onclick=()=>this.perform(async()=>{try{await navigator.clipboard.writeText(this.model.state.file.uri);$('file-notice').textContent='Resource URI copied.'}catch{$('file-uri').hidden=false;$('file-uri').focus();$('file-uri').select();$('file-notice').textContent='Copy the selected resource URI.'}});
+    // Middle-click (auxclick) never fires click; route it the same way so no
+    // link from box content is followed outside resolveFileLink.
+    $('file-preview').onauxclick=event=>{if(event.target.closest('a'))$('file-preview').onclick(event)};
     $('file-preview').onclick=event=>{
       const link=event.target.closest('a');if(!link)return;event.preventDefault();
       try {const target=resolveFileLink(link.getAttribute('href'),this.model.state.file.uri);if(!target)throw Error('This link is not a file in the selected box or an HTTP(S) URL.');if(target.external)this.perform(()=>this.external(target.external));else if(target.path===this.model.state.file.path&&target.hash){}else this.openFile(target.path);}catch(error){$('file-notice').textContent=error.message}
@@ -77,7 +80,7 @@ export class FilesView {
       preview.replaceChildren();
       if(!file){const message=document.createElement('p');message.className='muted';message.textContent='Open a file to see its actual contents here.';preview.append(message)}
       else if(state.loading&&!state.text){preview.textContent='Reading file…'}
-      else if(/\.(md|markdown)$/i.test(file.path)&&!this.raw){preview.innerHTML=DOMPurify.sanitize(marked.parse(state.text),{ALLOWED_TAGS:allowedTags,ALLOWED_ATTR:['href','title'],ALLOW_DATA_ATTR:false,SANITIZE_NAMED_PROPS:true,ALLOWED_URI_REGEXP:/^(?:(?:https?|discobox-file):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i});}
+      else if(/\.(md|markdown)$/i.test(file.path)&&!this.raw){preview.innerHTML=DOMPurify.sanitize(marked.parse(state.text),{ALLOWED_TAGS:allowedTags,ALLOWED_ATTR:['href','title'],ALLOW_DATA_ATTR:false,SANITIZE_NAMED_PROPS:true,ALLOWED_URI_REGEXP:MARKDOWN_URI_PATTERN});for(const link of preview.querySelectorAll('a[href]')){let target=null;try{target=resolveFileLink(link.getAttribute('href'),file.uri)}catch{}if(!target)link.removeAttribute('href')}}
       else {const source=document.createElement('pre');source.textContent=state.text;preview.append(source)}
       preview.scrollTop=scroll;
     }

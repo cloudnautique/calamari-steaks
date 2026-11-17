@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -67,6 +68,9 @@ func run() error {
 		*browse = false
 	}
 	token := os.Getenv("DISCOBOX_MCP_TOKEN")
+	// Whether the launcher (flag or DISCOBOX_MCP_ENDPOINT) pinned the endpoint,
+	// as opposed to the saved profile or the default local socket.
+	launcherEndpoint := *endpoint != ""
 	if *probe {
 		return runConnectionProbe(*identity)
 	}
@@ -125,12 +129,19 @@ func run() error {
 			}
 		}
 	}
+	if token != "" && !launcherEndpoint && !*local {
+		log.Print("Ignoring DISCOBOX_MCP_TOKEN: the upstream token is sent only to an endpoint pinned with --discobox or DISCOBOX_MCP_ENDPOINT, never to a saved or default profile")
+	}
+	token = boundUpstreamToken(token, launcherEndpoint)
 	if *identity == "" {
 		var e error
 		*identity, e = discobox.DefaultPeerIdentityPath()
 		if e != nil {
 			startupError = e
 		}
+	}
+	if warning := sharedSecretWarning(*identity); warning != "" && !*local {
+		log.Print(warning)
 	}
 	if *peerID {
 		_, id, e := discobox.PeerIdentity(*identity)
@@ -213,6 +224,9 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		if warning := sharedSecretWarning(*accessTokenFile); warning != "" {
+			log.Print(warning)
+		}
 		accessToken = strings.TrimSpace(string(data))
 		if accessToken == "" {
 			return fmt.Errorf("access token file is empty")
@@ -222,10 +236,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if removed := bridge.SweepStaleUploads(os.TempDir(), time.Hour); removed > 0 {
+		log.Printf("Removed %d stale private upload staging file(s)", removed)
+	}
 	defer s.CloseServiceForwards()
 	defer s.CloseFileUploads()
 	s.Onboarding = onboarding
-	log.Printf("Connection setup (private link): %s/setup#token=%s", origin, s.Token())
+	// A token supplied by file is already known to its owner. Never echo it:
+	// a declared workspace service's stderr becomes readable service logs.
+	shownToken := s.Token()
+	if *accessTokenFile != "" {
+		shownToken = "<token from --access-token-file>"
+	}
+	log.Printf("Connection setup (private link): %s/setup#token=%s", origin, shownToken)
 	mcpServer := s.MCP()
 	if *requestLog {
 		mcpServer.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -296,7 +319,7 @@ func run() error {
 	} else {
 		log.Print("Connection setup ready; backend operations are disabled until restart with valid settings")
 	}
-	log.Printf("Local terminal (private link): %s", s.BrowserURL())
+	log.Printf("Local terminal (private link): %s/#token=%s", origin, shownToken)
 	if err := web.Ready(); err != nil {
 		log.Printf("Terminal UI not built: %v. MCP read/send/wait remain available.", err)
 	}
@@ -311,7 +334,7 @@ func run() error {
 		}
 		return err
 	}
-	log.Printf("MCP: %s/mcp; Authorization: Bearer %s", origin, s.Token())
+	log.Printf("MCP: %s/mcp; Authorization: Bearer %s", origin, shownToken)
 	select {
 	case <-ctx.Done():
 		select {
@@ -325,4 +348,28 @@ func run() error {
 	case err := <-serveErr:
 		return err
 	}
+}
+
+// boundUpstreamToken keeps the launcher's upstream credential bound to the
+// endpoint the launcher pinned. A profile saved through the setup widget (or
+// the default local socket) can name any local socket or remote peer, so it
+// never receives the credential; this matches the isolated connection probe.
+func boundUpstreamToken(token string, launcherEndpoint bool) string {
+	if !launcherEndpoint {
+		return ""
+	}
+	return token
+}
+
+// sharedSecretWarning reports a private file (access token or Iroh identity)
+// that other local users can read. Windows ACLs are not mode bits; skip there.
+func sharedSecretWarning(path string) string {
+	if runtime.GOOS == "windows" || path == "" {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm()&0o077 == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Warning: private file %s is accessible to other local users (mode %04o); restrict it with chmod 600", path, info.Mode().Perm())
 }

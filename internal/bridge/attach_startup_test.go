@@ -71,8 +71,7 @@ func TestAppAttachWaitsForColdStartAndKeepsStreamAlive(t *testing.T) {
 		if elapsed := time.Since(started); elapsed < 29*time.Second {
 			t.Fatalf("test did not exercise startup wait: %s", elapsed)
 		}
-		data := opened.StructuredContent.(map[string]any)
-		id := data["terminalId"].(string)
+		id := toolData(opened)["terminalId"].(string)
 		defer server.closeAppTerminal(id)
 		time.Sleep(50 * time.Second)
 		result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "terminal_read", Arguments: map[string]any{"terminalId": id, "after": 0}})
@@ -83,7 +82,7 @@ func TestAppAttachWaitsForColdStartAndKeepsStreamAlive(t *testing.T) {
 			Chunks []string `json:"chunks"`
 			Closed bool     `json:"closed"`
 		}
-		encoded, _ := json.Marshal(result.StructuredContent)
+		encoded, _ := json.Marshal(result.Meta["terminal"])
 		if err := json.Unmarshal(encoded, &output); err != nil {
 			t.Fatal(err)
 		}

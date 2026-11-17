@@ -1,4 +1,4 @@
-import {approvalPlan,decisionSummary} from './approval-decision.js';
+import {approvalPlan,decisionSummary,defaultApprovalTTL} from './approval-decision.js';
 const $=id=>document.getElementById(id);
 function element(tag,text,className){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node}
 
@@ -79,7 +79,7 @@ export class ApprovalsView {
   if(!data.credentials?.length)detail.append(element('p','No existing credentials are available to approve through this connection. A sandbox needs delegated credentials; otherwise review in the Discobox console.'));
   const credentialLabel=element('label','Existing credential');const secret=element('select');secret.setAttribute('aria-label','Existing credential');secret.append(new Option('Choose a credential…',''));
   for(const choice of data.credentials||[])secret.append(new Option(`${choice.name} · ${choice.id}`,choice.id));credentialLabel.append(secret);form.append(credentialLabel);
-  const durationLabel=element('label','Duration (seconds)');const duration=element('input');duration.type='number';duration.min='1';duration.max='2592000';duration.value=String(request.ttlSeconds>0?Math.min(request.ttlSeconds,2592000):3600);duration.setAttribute('aria-label','Duration in seconds');durationLabel.append(duration);form.append(durationLabel);
+  const durationLabel=element('label','Duration (seconds)');const duration=element('input');duration.type='number';duration.min='1';duration.max='2592000';duration.value=String(defaultApprovalTTL(request.ttlSeconds));duration.setAttribute('aria-label','Duration in seconds');durationLabel.append(duration);form.append(durationLabel);
   const notice=element('p',undefined,'approval-notice');notice.setAttribute('role','status');detail.append(notice);
   const confirmPanel=element('div',undefined,'approval-confirm');confirmPanel.hidden=true;const summary=element('pre');const confirm=element('button','Confirm decision');confirmPanel.append(summary,confirm);detail.append(confirmPanel);
   const review=element('button','Review decision','primary');form.append(review);

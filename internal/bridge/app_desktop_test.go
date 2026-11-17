@@ -49,8 +49,8 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if string(data) != "PRIVATE_INPUT" {
-				t.Errorf("wrong desktop input")
+			if string(data) != string(desktopTestInput) {
+				t.Errorf("wrong desktop input %q", data)
 			}
 			writes.Add(1)
 		}
@@ -161,7 +161,7 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 	if manager.writeAs("mcp", func() error { return nil }) == nil {
 		t.Fatal("assistant write bypassed desktop focus")
 	}
-	input := map[string]any{"desktopId": id, "action": "write", "sequence": 1, "data": base64.StdEncoding.EncodeToString([]byte("PRIVATE_INPUT"))}
+	input := map[string]any{"desktopId": id, "action": "write", "sequence": 1, "data": base64.StdEncoding.EncodeToString(desktopTestInput)}
 	call("desktop_action", input)
 	call("desktop_action", input)
 	call("desktop_action", map[string]any{"desktopId": id, "action": "release"})
@@ -181,6 +181,9 @@ func TestDesktopRelayIsPrivateAndIndependentOfTerminal(t *testing.T) {
 		t.Fatal("closed desktop remains reachable")
 	}
 }
+
+// RFB 3.8 handshake (security None, shared ClientInit) followed by one KeyEvent.
+var desktopTestInput = append([]byte("RFB 003.008\n\x01\x01"), 4, 1, 0, 0, 0, 0, 0, 0x61)
 
 type desktopTestOutput struct{ io.Writer }
 

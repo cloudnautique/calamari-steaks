@@ -2,7 +2,9 @@
 package web
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"strings"
 )
@@ -65,4 +67,27 @@ func SetupHTML() (string, error) {
 	}
 	script := strings.ReplaceAll(string(js), "</script", "<\\/script")
 	return strings.NewReplacer("<!--STYLE-->", "<style>"+string(css)+"</style>", "<!--SCRIPT-->", "<script type=\"module\">"+script+"</script>").Replace(string(html)), nil
+}
+
+// ScriptHashes returns CSP source expressions ('sha256-…') for every inline
+// <script type="module"> in a page built by HTML or SetupHTML, so the HTTP
+// pages can allow exactly their own bundle instead of 'unsafe-inline'.
+func ScriptHashes(html string) string {
+	const open, end = "<script type=\"module\">", "</script>"
+	var hashes []string
+	for {
+		start := strings.Index(html, open)
+		if start < 0 {
+			break
+		}
+		html = html[start+len(open):]
+		stop := strings.Index(html, end)
+		if stop < 0 {
+			break
+		}
+		sum := sha256.Sum256([]byte(html[:stop]))
+		hashes = append(hashes, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+		html = html[stop+len(end):]
+	}
+	return strings.Join(hashes, " ")
 }

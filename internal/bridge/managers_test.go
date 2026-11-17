@@ -165,10 +165,7 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 		if result.IsError != wantError {
 			t.Fatalf("%s error=%v content=%v", name, result.IsError, result.Content)
 		}
-		encoded, _ := json.Marshal(result.StructuredContent)
-		var data map[string]any
-		json.Unmarshal(encoded, &data)
-		return data
+		return toolData(result)
 	}
 	boxCatalog := call("list_boxes", map[string]any{}, false)
 	if len(boxCatalog["boxes"].([]any)) != 5 || boxCatalog["listingScope"] == nil || boxCatalog["roleMeaning"] == nil {

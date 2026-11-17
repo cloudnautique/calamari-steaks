@@ -58,6 +58,15 @@ focus claim, then delivered in order after ownership is confirmed. Blur, tab
 changes, failed claims, or disconnects discard it; uncertain network input is
 never retried. A second view cannot take an existing controller's lease.
 
+The adapter enforces that ownership on the server, not only in the canvas. It
+parses the RFB client stream per view: handshake bytes and viewer messages
+(pixel format, encodings, update requests, continuous updates, fences) always
+pass, while keyboard, pointer, clipboard, desktop-size, XVP and QEMU key events
+are delivered only while that view holds the box's input claim, checked under
+the same lock that transfers it. Input from a view without the claim is dropped.
+Supported handshakes are RFB 3.7/3.8 with security type None or VNC
+authentication (the Discobox x11vnc desktop); anything else closes the view.
+
 The Display selector defaults to Fit display and also offers Adapt resolution and Actual size.
 Adapt requests the canvas resolution through noVNC only while this view owns
 input, where the VNC server supports remote resizing; local scaling remains the

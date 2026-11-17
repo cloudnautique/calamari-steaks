@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
 	"github.com/cloudnautique/discobox-mcp-ui/internal/testhttp"
@@ -147,5 +149,44 @@ func TestPrivateUploadOrderingPermissionsAndCleanup(t *testing.T) {
 	s.CloseFileUploads()
 	if len(s.uploads) != 0 {
 		t.Fatal("shutdown leaked uploads")
+	}
+}
+
+// Regression for SECURITY-REVIEW.md H10: staging files left by a crash are
+// swept, while fresh uploads, other files and symlinks are left alone.
+func TestSweepStaleUploads(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Now().Add(-2 * time.Hour)
+	write := func(name string, modified time.Time) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	stale := write(uploadPrefix+"stale", old)
+	fresh := write(uploadPrefix+"fresh", time.Now())
+	other := write("unrelated-file", old)
+	target := write("symlink-target", old)
+	link := filepath.Join(dir, uploadPrefix+"link")
+	linked := os.Symlink(target, link) == nil
+	if removed := SweepStaleUploads(dir, time.Hour); removed != 1 {
+		t.Fatalf("removed %d files, want 1", removed)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatal("stale staging file survived")
+	}
+	for _, path := range []string{fresh, other, target} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s was removed", path)
+		}
+	}
+	if linked {
+		if _, err := os.Lstat(link); err != nil {
+			t.Fatal("symlink was removed")
+		}
 	}
 }
