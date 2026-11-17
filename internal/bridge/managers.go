@@ -386,11 +386,11 @@ func widgetBoxes(boxes []discobox.Manager) []discobox.Manager {
 
 // listBoxes is the widget's full catalog.
 func (s *Server) listBoxes(ctx context.Context) (map[string]any, error) {
-	inbox, err := s.snapshot(ctx, 2*time.Second)
+	inbox, err := s.snapshot(ctx, catalogModelAge)
 	return map[string]any{"view": "boxes", "boxes": widgetBoxes(inbox.Boxes), "project": s.backend().Session.Project}, err
 }
 func (s *Server) attention(ctx context.Context) (map[string]any, error) {
-	inbox, err := s.snapshot(ctx, 2*time.Second)
+	inbox, err := s.snapshot(ctx, catalogModelAge)
 	inbox.Boxes = widgetBoxes(inbox.Boxes)
 	return map[string]any{"view": "attention", "inbox": inbox}, err
 }
@@ -421,7 +421,7 @@ func (input boxInput) target() (string, error) {
 func (s *Server) boxTools(server *mcp.Server) {
 	ui := mcp.Meta{"ui": map[string]any{"resourceUri": uiResource}}
 	mcp.AddTool(server, &mcp.Tool{Name: "list_boxes", Description: "List boxes in this project, including ones created in the Discobox console or elsewhere: ID, name, role, state, agent status and a short task preview. Archived boxes are hidden unless includeArchived. Paged; filter with query or needsAttention. Opens the task launcher and box catalog where the host shows apps. Does not wake or attach boxes.", Meta: ui, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input listBoxesInput) (*mcp.CallToolResult, map[string]any, error) {
-		inbox, err := s.snapshot(ctx, 2*time.Second)
+		inbox, err := s.snapshot(ctx, catalogModelAge)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -449,7 +449,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 		return workspaceResult(data)
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "list_attention", Meta: ui, Description: "List what needs the person: pending approval requests and boxes whose agent reported blocked, error or done. Requests persist in Discobox independently of this widget. coverage/warning describe what this connection cannot see. Use open_approval to review a credential request by ID.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
-		inbox, err := s.snapshot(ctx, 2*time.Second)
+		inbox, err := s.snapshot(ctx, catalogModelAge)
 		if err != nil {
 			return nil, nil, err
 		}

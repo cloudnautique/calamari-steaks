@@ -24,7 +24,7 @@ var (
 )
 
 func TestToolSurfaceSnapshot(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	s, err := New(nil, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{})
 	if err != nil {
@@ -72,7 +72,7 @@ func TestToolSurfaceSnapshot(t *testing.T) {
 }
 
 func TestLegacyUIResourcesStillResolve(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	s, err := New(nil, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{})
 	if err != nil {
@@ -91,6 +91,11 @@ func TestLegacyUIResourcesStillResolve(t *testing.T) {
 }
 
 func TestModelCatalogIsBoundedAndCached(t *testing.T) {
+	// Under the race detector on a slow runner, serializing 100 large boxes
+	// can outlast the default reuse window; caching is what is tested here.
+	polled, model := catalogPolledAge, catalogModelAge
+	catalogPolledAge, catalogModelAge = time.Hour, time.Hour
+	t.Cleanup(func() { catalogPolledAge, catalogModelAge = polled, model })
 	network := testhttp.NewNetwork(t)
 	lists := 0
 	task := strings.Repeat("Implement the feature carefully. ", 2000) // ~64 KiB

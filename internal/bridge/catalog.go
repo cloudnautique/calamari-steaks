@@ -17,10 +17,16 @@ import (
 // cache; at most one upstream read is in flight. While the upstream event
 // stream is connected, the cache is invalidated by events instead of age.
 const (
-	catalogPolledAge  = 10 * time.Second
 	catalogWatchedAge = 2 * time.Minute
 	catalogWatchIdle  = 2 * time.Minute
 )
+
+// catalogPolledAge is how long widgets reuse the catalog without the event
+// stream. A variable so tests do not depend on how fast the machine is.
+var catalogPolledAge = 10 * time.Second
+
+// catalogModelAge bounds how stale a catalog a model-facing tool may serve.
+var catalogModelAge = 2 * time.Second
 
 type catalogCache struct {
 	mu        sync.Mutex
