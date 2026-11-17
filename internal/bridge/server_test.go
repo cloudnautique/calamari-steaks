@@ -102,6 +102,7 @@ func testServer(t *testing.T, b *fakeBackend) (*Server, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.LegacyTools = true // These tests also cover the legacy aliases.
 	httpServer.Config.Handler = s.Handler(nil)
 	httpServer.Start()
 	t.Cleanup(httpServer.Close)
@@ -135,7 +136,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 53 {
+	if len(listed.Tools) != 55 { // 42 default tools plus 13 legacy aliases
 		t.Fatalf("tools: %d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {

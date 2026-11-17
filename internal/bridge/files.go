@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -109,19 +108,6 @@ func (s *Server) fileTools(server *mcp.Server) {
 			return nil, nil, err
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "File chunk read for canvas preview."}}}, fileMap(result), nil
-	})
-	mcp.AddTool(server, &mcp.Tool{Name: "open_box_file", Description: "SHOW UI: open an actual file in the cross-host MCP App canvas. Use this to show reports or source files rather than linking a bare /workspace path. Returns a typed MCP resource link and opens the Files preview. Does not attach a terminal or run commands. Existing terminal streams remain active when viewing another file in the same box.", Meta: mcp.Meta{"ui": map[string]any{"resourceUri": uiResource}}, Annotations: readonly}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileTargetInput) (*mcp.CallToolResult, map[string]any, error) {
-		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		info, err := s.Client.StatFile(ctx, input.BoxID, s.managerOptions.Parent, input.Path)
-		if err != nil {
-			return nil, nil, err
-		}
-		if info.Type != "file" {
-			return nil, nil, errors.New("open_box_file requires a regular file; list directories with list_box_files")
-		}
-		data := map[string]any{"view": "files", "boxId": input.BoxID, "project": s.Client.Session.Project, "file": info, "directory": path.Dir(info.Path)}
-		return &mcp.CallToolResult{Meta: mcp.Meta{"connection": data}, Content: []mcp.Content{fileLink(info)}}, data, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "file_stat", Description: "MCP App file version and metadata check.", Meta: mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}, Annotations: readonly}, func(ctx context.Context, _ *mcp.CallToolRequest, input fileTargetInput) (*mcp.CallToolResult, map[string]any, error) {
 		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)

@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cloudnautique/discobox-mcp-ui/internal/connection"
 	"github.com/cloudnautique/discobox-mcp-ui/internal/discobox"
@@ -28,6 +30,9 @@ type Server struct {
 	Client           *discobox.Client
 	Onboarding       *connection.Controller
 	Origin           string
+	// LegacyTools serves the manager-named tool aliases and pre-0.12 view
+	// tools for launchers configured against earlier versions.
+	LegacyTools      bool
 	token            string
 	allowedOrigins   map[string]bool
 	managersMu       sync.Mutex
@@ -35,11 +40,13 @@ type Server struct {
 	managerOptions   discobox.ManagerOptions
 	appMu            sync.Mutex
 	appTerminals     map[string]*appTerminal
+	evictedTerminals map[string]string
 	desktopMu        sync.Mutex
 	desktops         map[string]*desktopSession
 	desktopOpening   int
 	approvalMu       sync.Mutex
 	approvalReviews  map[string]approvalReview
+	catalog          catalogCache
 }
 
 func New(client *discobox.Client, origin string, extraOrigins []string, accessToken string, options discobox.ManagerOptions) (*Server, error) {
@@ -59,10 +66,11 @@ func New(client *discobox.Client, origin string, extraOrigins []string, accessTo
 	}
 	s := &Server{Client: client, Origin: origin, token: accessToken, allowedOrigins: map[string]bool{origin: true}, appTerminals: make(map[string]*appTerminal), managers: make(map[string]*managerConnection), managerOptions: options}
 	s.desktops = make(map[string]*desktopSession)
+	s.evictedTerminals = make(map[string]string)
 	s.serviceForwards = make(map[string]*serviceForward)
 	s.serviceOpenSlots = make(chan struct{}, 8)
 	if client != nil && client.Session.Box != "" {
-		s.managers[client.Session.Box] = &managerConnection{Client: client}
+		s.managers[client.Session.Box] = newManagerConnection(client)
 	}
 	for _, origin := range extraOrigins {
 		if origin != "null" {
@@ -96,11 +104,11 @@ func (s *managerConnection) writeAs(owner string, write func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.archived {
-		return errors.New("manager is archived; choose another manager")
+		return errors.New("box is archived; choose another box")
 	}
 	if owner == "mcp" {
 		if s.controller != "" {
-			return errors.New("a person has input focus; wait for them to leave the composer or terminal before sending instructions")
+			return &HumanControlError{Since: s.since}
 		}
 	} else if s.controller != owner {
 		return errors.New("take terminal control before typing")
@@ -114,7 +122,7 @@ func (s *managerConnection) resizeAs(view string, resize func() error) (bool, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.archived {
-		return false, errors.New("manager is archived; choose another manager")
+		return false, errors.New("box is archived; choose another box")
 	}
 	if s.controller != "" && s.controller != view {
 		return false, nil
@@ -129,10 +137,13 @@ func (s *managerConnection) claim(owner string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.archived {
-		return errors.New("manager is archived; choose another manager")
+		return errors.New("box is archived; choose another box")
 	}
 	if s.controller != "" && s.controller != owner {
-		return errors.New("another browser has terminal control")
+		return errors.New("another view of this box has input control; leave it there first")
+	}
+	if s.controller != owner {
+		s.since = time.Now()
 	}
 	s.controller = owner
 	return nil
@@ -225,4 +236,12 @@ func trimBearer(header string) string {
 		return ""
 	}
 	return header[len(prefix):]
+}
+
+// HumanControlError tells the assistant that a person is typing in the widget.
+// Nothing was sent. The text names a stable code the model can act on.
+type HumanControlError struct{ Since time.Time }
+
+func (e *HumanControlError) Error() string {
+	return fmt.Sprintf("human_has_control: a person has had input in this box's terminal or desktop since %s. Nothing was sent. Wait (for example with wait_box) or ask them to click back into chat, then read the box again before sending", e.Since.UTC().Format(time.RFC3339))
 }

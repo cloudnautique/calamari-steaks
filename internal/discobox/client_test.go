@@ -82,7 +82,7 @@ func TestPrimaryPinAndManagerLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waited, err := client.Wait(ctx, sent["resumeAfter"].(string), 10)
+	waited, err := client.Wait(ctx, WaitOptions{After: sent["resumeAfter"].(string), Seconds: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,10 +122,53 @@ func TestRejectsUnsafeTargetsAndRedirects(t *testing.T) {
 	if _, err := c.Send(context.Background(), " ", true); err == nil {
 		t.Error("empty input accepted")
 	}
-	if _, err := c.Wait(context.Background(), "", 1); err == nil {
-		t.Error("wait without cursor accepted")
+	if _, err := c.Wait(context.Background(), WaitOptions{Seconds: 50}); err == nil {
+		t.Error("wait longer than the host budget accepted")
+	}
+	if _, err := c.Wait(context.Background(), WaitOptions{Until: "forever"}); err == nil {
+		t.Error("unknown wait condition accepted")
 	}
 	if _, err := c.Screen(context.Background(), 501); err == nil {
 		t.Error("unbounded screen accepted")
+	}
+}
+
+func TestWaitWithoutCursorUsesLastInputAndFallsBack(t *testing.T) {
+	network := testhttp.NewNetwork(t)
+	var bodies []map[string]any
+	server := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		until := body["until"].(map[string]any)
+		if _, hooks := until["hookEvents"]; hooks && len(bodies) == 2 {
+			// Simulate a server that predates hook events.
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"reason":"timeout","resumeAfter":"c2"}`))
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "", Session{Project: "default", Box: "box", Exec: "exec-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Wait(context.Background(), WaitOptions{Until: UntilTurnEnd}); err != nil {
+		t.Fatal(err)
+	}
+	first := bodies[0]["until"].(map[string]any)
+	if first["fromLastInput"] != true || first["after"] != nil || bodies[0]["timeoutSeconds"].(float64) != 30 {
+		t.Fatalf("cursor-free wait: %#v", bodies[0])
+	}
+	if hooks := first["hookEvents"].([]any); len(hooks) != 1 || hooks[0] != "Stop" {
+		t.Fatalf("turn_end hooks: %#v", first)
+	}
+	waited, err := c.Wait(context.Background(), WaitOptions{After: "c1", Seconds: 5})
+	if err != nil || waited["resumeAfter"] != "c2" {
+		t.Fatalf("legacy fallback: %v %#v", err, waited)
+	}
+	legacy := bodies[2]["until"].(map[string]any)
+	if legacy["hookEvents"] != nil || legacy["after"] != "c1" || legacy["programStates"] == nil {
+		t.Fatalf("legacy body: %#v", legacy)
 	}
 }

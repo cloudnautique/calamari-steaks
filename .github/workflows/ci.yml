@@ -42,17 +42,6 @@ jobs:
         with:
           node-version: '24.22.1'
           cache: npm
-      # scripts/build-ui.mjs reads the brand tokens from this reference tree.
-      # Keep this revision aligned with the Discobox pseudo-version in go.mod.
-      - name: Check out pinned Discobox brand dependency
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: discobox-ai/discobox
-          ref: d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61
-          path: discobox
-          persist-credentials: false
-          sparse-checkout: assets/brand/tokens.css
-          sparse-checkout-cone-mode: false
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Build embedded frontend
@@ -107,15 +96,6 @@ jobs:
         with:
           node-version: '24.22.1'
           cache: npm
-      - name: Check out pinned Discobox brand dependency
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: discobox-ai/discobox
-          ref: d6c392a3cce73ee87e716ff6e9c9082fb3ef2c61
-          path: discobox
-          persist-credentials: false
-          sparse-checkout: assets/brand/tokens.css
-          sparse-checkout-cone-mode: false
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Build unsigned MCP bundles

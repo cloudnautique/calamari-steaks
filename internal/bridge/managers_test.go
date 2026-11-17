@@ -42,6 +42,10 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 		path := strings.TrimPrefix(r.URL.Path, "/api")
 		const root = "/projects/p/sandboxes"
 		reply := func(value any) { json.NewEncoder(w).Encode(value) }
+		if path == "/projects/p/secret-requests" {
+			reply(map[string]any{"secretRequests": []any{}})
+			return
+		}
 		if path == root {
 			switch r.Method {
 			case "GET":
@@ -153,6 +157,7 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.LegacyTools = true
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	client := mcpClient(t, ctx, s)
@@ -171,8 +176,8 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 		return data
 	}
 	boxCatalog := call("list_boxes", map[string]any{}, false)
-	if len(boxCatalog["boxes"].([]any)) != 5 || boxCatalog["listingScope"] == nil || boxCatalog["roleMeaning"] == nil {
-		t.Fatal("box listing lost its scope or role semantics")
+	if len(boxCatalog["boxes"].([]any)) != 5 || boxCatalog["total"] != float64(5) || boxCatalog["project"] != "p" {
+		t.Fatal("box listing lost boxes or its project")
 	}
 	if _, legacy := boxCatalog["managers"]; legacy {
 		t.Fatal("box catalog mislabeled boxes as managers")

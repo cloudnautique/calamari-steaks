@@ -12,7 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const setupResource = "ui://discobox/connection-v2.html"
+const setupResourceURI = "ui://discobox/connection-v2.html"
 
 func setupResult(value any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Connection setup updated. No backend authorization or box creation was performed."}}, Meta: mcp.Meta{"onboarding": value}}
@@ -24,7 +24,7 @@ func (s *Server) setupController() (*connection.Controller, error) {
 	return s.Onboarding, nil
 }
 func (s *Server) onboardingTools(server *mcp.Server) {
-	ui := mcp.Meta{"ui": map[string]any{"resourceUri": setupResource}}
+	ui := mcp.Meta{"ui": map[string]any{"resourceUri": setupResourceURI}}
 	mcp.AddTool(server, &mcp.Tool{Name: "open_connection_setup", Description: "SHOW UI: connect to Discobox using the local socket or a pinned remote Iroh server. Always available, including offline. Shows peer enrollment instructions; cannot authorize itself or create boxes.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, connection.Status, error) {
 		c, e := s.setupController()
 		if e != nil {
@@ -81,15 +81,7 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		}
 		return setupResult(r), nil, nil
 	})
-	for _, uri := range []string{setupResource, "ui://discobox/connection-v1.html"} {
-		server.AddResource(&mcp.Resource{URI: uri, Name: "Discobox connection setup", MIMEType: "text/html;profile=mcp-app"}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-			html, e := web.SetupHTML()
-			if e != nil {
-				return nil, e
-			}
-			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/html;profile=mcp-app", Text: html, Meta: mcp.Meta{"ui": map[string]any{"prefersBorder": true, "csp": map[string]any{"connectDomains": []string{}, "resourceDomains": []string{}}}}}}}, nil
-		})
-	}
+	server.AddResource(&mcp.Resource{URI: setupResourceURI, Name: "Discobox connection setup", MIMEType: "text/html;profile=mcp-app"}, setupResource)
 	// Invalid endpoint/key/config must not make the MCP server disappear. Other
 	// tools/resources return actionable errors instead of dereferencing nil.
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -162,4 +154,14 @@ func (s *Server) setupHTTP(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(value)
 	})))
+}
+
+var legacySetupResources = map[string]bool{"connection-v1.html": true}
+
+func setupResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	html, e := web.SetupHTML()
+	if e != nil {
+		return nil, e
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/html;profile=mcp-app", Text: html, Meta: mcp.Meta{"ui": map[string]any{"prefersBorder": true, "csp": map[string]any{"connectDomains": []string{}, "resourceDomains": []string{}}}}}}}, nil
 }

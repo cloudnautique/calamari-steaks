@@ -48,7 +48,7 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 	if managersOnly {
 		path += "?tag=" + managerTagKey + "%3D" + managerTagValue
 	}
-	result, err := c.request(ctx, http.MethodGet, path, nil)
+	result, err := c.requestLimited(ctx, http.MethodGet, path, nil, listingResponseLimit)
 	if err != nil {
 		return nil, err
 	}

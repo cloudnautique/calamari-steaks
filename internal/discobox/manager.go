@@ -36,6 +36,10 @@ type ManagerOptions struct {
 	CreateOnly bool
 	Name       string
 	Intent     string
+	// PrimaryWait bounds how long creation waits for the primary session.
+	// Zero waits for the caller's deadline. When it elapses the box is
+	// returned with an empty Exec: it exists and is still starting.
+	PrimaryWait time.Duration
 	// Progress goes to the operator's stderr, never the MCP stdout stream.
 	Progress func(string)
 }
@@ -104,10 +108,10 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 	}
 	if err == nil {
 		if record.Version != 1 || record.Endpoint != endpoint || record.Project != project || record.Parent != options.Parent || record.Intent != options.Intent {
-			return nil, errors.New("manager state belongs to a different endpoint/project, parent, creation settings or format; use the matching configuration or a different --manager-state path")
+			return nil, errors.New("this creation key was already used with different settings or another connection; reuse the original settings, or use a new request ID (a new --manager-state path from the command line) for a new box")
 		}
 		if record.Box == "" {
-			return nil, fmt.Errorf("manager creation is pending or its outcome is unknown (name %q, state %s); inspect Discobox and reconnect with --box ID; no create was retried", record.Name, options.StatePath)
+			return nil, fmt.Errorf("an earlier creation with this key is pending or its outcome is unknown (box name %q); list boxes and open it if it exists. Nothing was created again", record.Name)
 		}
 		if record.Exec == "" {
 			record.Exec = "primary"
@@ -200,16 +204,16 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		if err != nil {
 			// Even an error response could follow a committed create. Leave the
 			// intent in place and require reconciliation rather than creating twice.
-			return nil, fmt.Errorf("manager create did not complete; inspect Discobox for %q before retrying (intent saved in %s): %w", record.Name, options.StatePath, err)
+			return nil, fmt.Errorf("the create request did not complete, so its outcome is unknown; list boxes and look for %q before trying again (the request was recorded and will not be repeated automatically): %w", record.Name, err)
 		}
 		record.Box, _ = box["id"].(string)
 		if !identifier.MatchString(record.Box) {
-			return nil, fmt.Errorf("manager create returned no valid box ID; inspect Discobox for %q; creation will not be retried", record.Name)
+			return nil, fmt.Errorf("Discobox did not return a valid box ID; list boxes and look for %q (creation will not be repeated automatically)", record.Name)
 		}
 		c.Session.Box = record.Box
 		// Persist immediately, before waiting for provisioning or the first exec.
 		if err := saveManagerRecord(options.StatePath, record); err != nil {
-			return nil, fmt.Errorf("manager %s was created but could not be saved; reconnect with --box %s: %w", record.Box, record.Box, err)
+			return nil, fmt.Errorf("box %s was created, but its record could not be saved; open box %s directly: %w", record.Box, record.Box, err)
 		}
 		if err := checkManagerParent(box, options.Parent); err != nil {
 			return nil, fmt.Errorf("created manager %s saved: %w", record.Box, err)
@@ -217,12 +221,25 @@ func EnsureManager(ctx context.Context, endpoint, token, project string, options
 		progress("Created manager " + record.Box + "; waiting for its primary session")
 	}
 	if c.Session.Exec == "primary" {
-		if err := c.awaitPrimary(ctx); err != nil {
-			return nil, fmt.Errorf("manager %s saved; primary session not ready (retry reuses it): %w", record.Box, err)
+		waitCtx, cancel := ctx, context.CancelFunc(func() {})
+		if options.PrimaryWait > 0 {
+			waitCtx, cancel = context.WithTimeout(ctx, options.PrimaryWait)
 		}
-		record.Exec = c.Session.Exec
-		if err := saveManagerRecord(options.StatePath, record); err != nil {
-			return nil, fmt.Errorf("could not save manager session; use --box %s --exec %s: %w", c.Session.Box, c.Session.Exec, err)
+		err := c.awaitPrimary(waitCtx)
+		cancel()
+		switch {
+		case err == nil:
+			record.Exec = c.Session.Exec
+			if err := saveManagerRecord(options.StatePath, record); err != nil {
+				return nil, fmt.Errorf("box %s was created, but its session could not be recorded; open box %s directly: %w", c.Session.Box, c.Session.Box, err)
+			}
+		case options.PrimaryWait > 0 && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded):
+			// Still provisioning. The box exists and is journalled; a later
+			// open or the same creation key picks up its session.
+			c.Session.Exec = ""
+			progress("Box " + c.Session.Box + " is still starting")
+		default:
+			return nil, fmt.Errorf("box %s was created; its terminal session is not ready yet (opening it or repeating the same creation reuses it): %w", record.Box, err)
 		}
 	}
 	if needsTag {
@@ -342,7 +359,7 @@ func (c *Client) CheckManagerParent(ctx context.Context, parent string) error {
 func managerLifecycleError(box map[string]any) error {
 	runtime, _ := box["runtime"].(map[string]any)
 	if state, _ := runtime["desiredState"].(string); state == "archived" || state == "deleted" {
-		return fmt.Errorf("box is %s; restore it in Discobox or select a different box", state)
+		return fmt.Errorf("box is %s; restore it or choose a different box", state)
 	}
 	return nil
 }
@@ -354,7 +371,7 @@ func (c *Client) awaitPrimary(ctx context.Context) error {
 			return nil
 		}
 		var status *HTTPError
-		transient := errors.Is(err, errNoPrimary) || (errors.As(err, &status) && (status.Status == 404 || status.Status == 409 || status.Status == 502 || status.Status == 503))
+		transient := errors.Is(err, ErrNoPrimary) || (errors.As(err, &status) && (status.Status == 404 || status.Status == 409 || status.Status == 502 || status.Status == 503))
 		if !transient {
 			return err
 		}

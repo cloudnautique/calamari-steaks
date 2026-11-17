@@ -51,9 +51,9 @@ func (c *Client) Attach(ctx context.Context) (*Stream, error) {
 			return nil, &HTTPError{Status: response.StatusCode, Path: c.execPath() + "/attach"}
 		}
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("manager terminal attach canceled before it became ready: %w", ctx.Err())
+			return nil, fmt.Errorf("terminal attach was canceled before the box became ready: %w", ctx.Err())
 		}
-		return nil, errors.New("could not attach to manager; it may still be starting or be unreachable; reconnect to the same manager before sending input")
+		return nil, errors.New("could not attach to this box's terminal; it may still be starting or be unreachable. Reconnect before sending input; nothing was sent")
 	}
 	ws.SetReadLimit(maxFrame + 5)
 	return &Stream{conn: websocket.NetConn(ctx, ws, websocket.MessageBinary)}, nil
