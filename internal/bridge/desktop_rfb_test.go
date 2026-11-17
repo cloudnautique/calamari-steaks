@@ -119,3 +119,40 @@ func TestDesktopWriteRequiresInputClaim(t *testing.T) {
 		t.Fatalf("non-owner view delivered %v, want only handshake and update request", fromB.Bytes())
 	}
 }
+
+// noVNC answers the server's clipboard caps on connect, while the view is
+// still a viewer; that reply must reach the server. Clipboard contents (any
+// other extended action) remain input.
+func TestRFBFilterPassesClipboardCapsOnly(t *testing.T) {
+	caps := []byte{6, 0, 0, 0, 0xff, 0xff, 0xff, 0xf8, 0x1f, 0, 0, 1, 0, 0, 0x04, 0} // caps|request|peek|notify|provide, text
+	provide := []byte{6, 0, 0, 0, 0xff, 0xff, 0xff, 0xf8, 0x10, 0, 0, 1, 1, 2, 3, 4}
+	stream := bytes.Join([][]byte{rfbHandshake, caps, provide}, nil)
+	for _, step := range []int{1, 5, len(stream)} {
+		var filter rfbFilter
+		var got []bool
+		for offset := 0; offset < len(stream); offset += step {
+			segments, err := filter.feed(stream[offset:min(offset+step, len(stream))])
+			if err != nil {
+				t.Fatalf("step %d: %v", step, err)
+			}
+			for _, segment := range segments {
+				got = append(got, segment.input)
+			}
+		}
+		if want := []bool{false, false, false, false, true}; !slicesEqual(got, want) {
+			t.Fatalf("step %d: input=%v, want %v", step, got, want)
+		}
+	}
+}
+
+func slicesEqual(a, b []bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

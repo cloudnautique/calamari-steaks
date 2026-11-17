@@ -201,7 +201,7 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/ws") {
+		if s.Client == nil && (strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/connection/") || r.URL.Path == "/terminal") {
 			http.Error(w, "Connection setup required; open /setup using the private link", 503)
 			return
 		}

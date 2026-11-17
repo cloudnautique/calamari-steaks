@@ -8,7 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const uiResource = "ui://discobox/workspace-v14.html"
+const uiResource = "ui://discobox/workspace-v15.html"
 
 type empty struct{}
 type readInput struct {
@@ -88,7 +88,7 @@ func (s *Server) MCP() *mcp.Server {
 	})
 	// Previously published resource URIs remain readable by restored sessions
 	// whose tool descriptors are cached by the desktop host.
-	for _, uri := range []string{uiResource, "ui://discobox/workspace-v13.html", "ui://discobox/workspace-v12.html", "ui://discobox/workspace-v11.html", "ui://discobox/workspace-v10.html", "ui://discobox/workspace-v9.html", "ui://discobox/workspace-v8.html", "ui://discobox/workspace-v7.html", "ui://discobox/workspace-v6.html", "ui://discobox/workspace-v5.html", "ui://discobox/workspace-v4.html", "ui://discobox/managers-v3.html", "ui://discobox/manager-v2.html", "ui://discobox/manager.html"} {
+	for _, uri := range []string{uiResource, "ui://discobox/workspace-v14.html", "ui://discobox/workspace-v13.html", "ui://discobox/workspace-v12.html", "ui://discobox/workspace-v11.html", "ui://discobox/workspace-v10.html", "ui://discobox/workspace-v9.html", "ui://discobox/workspace-v8.html", "ui://discobox/workspace-v7.html", "ui://discobox/workspace-v6.html", "ui://discobox/workspace-v5.html", "ui://discobox/workspace-v4.html", "ui://discobox/managers-v3.html", "ui://discobox/manager-v2.html", "ui://discobox/manager.html"} {
 		server.AddResource(&mcp.Resource{URI: uri, Name: "Discobox manager", MIMEType: "text/html;profile=mcp-app"}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 			html, err := web.HTML()
 			if err != nil {
