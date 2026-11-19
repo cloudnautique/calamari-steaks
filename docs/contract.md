@@ -22,11 +22,13 @@ surface fails a test until this page and the test agree.
 | Files | `list_box_files`, `read_box_file` |
 | Services | `list_services`, `control_service`, `open_service`, `close_service_forward`, `list_service_forwards`, `read_service_logs` |
 | Approvals | `open_approval`, `list_approval_requests` |
-| Connection | `open_connection_setup`, `connection_status`, `test_connection`, `get_connection_peer_id` |
+| Connection | `get_backend_health`, `open_connection_setup`, `connection_status`, `test_connection`, `get_connection_peer_id` |
 
 UI-bearing tools (`_meta.ui.resourceUri`) render the workspace or setup app
 where the host supports MCP Apps and return text and structured data
 everywhere else.
+
+`get_backend_health` reads the active project’s pool list. Each pool reports scheduling headroom separately from measured CPU, memory, and storage usage. Disk free GiB uses the storage filesystem’s unprivileged free bytes. Disk percent used is used bytes divided by total bytes. Missing fields are unknown. Compare report timestamps for freshness. A permission error means pool health is unavailable to this connection.
 
 ### Text-only flow
 

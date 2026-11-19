@@ -26,7 +26,7 @@ func TestSetupAvailableWithNoBackend(t *testing.T) {
 	}, errors.New("fixture startup failure"))
 	client := mcpClient(t, ctx, s)
 	listed, e := client.ListTools(ctx, nil)
-	if e != nil || len(listed.Tools) != 43 {
+	if e != nil || len(listed.Tools) != 44 {
 		t.Fatalf("list tools: %v %v", listed, e)
 	}
 	for _, name := range []string{"connection_status", "open_connection_setup", "get_connection_peer_id", "test_connection"} {

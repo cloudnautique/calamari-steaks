@@ -13,10 +13,11 @@ function config(){return{endpoint:byId('endpoint').value.trim(),project:byId('pr
 function keepSaveToken(result){const value=result?._meta?.setup?.saveToken;if(typeof value==='string'&&value)saveToken=value;}
 async function call(name,args={}){
  if(app){const r=await app.callServerTool({name,arguments:args});keepSaveToken(r);if(r.isError)throw Error(r.content?.find(c=>c.type==='text')?.text||'The action could not complete.');return r._meta?.onboarding||r.structuredContent;}
- const action={connection_status:'status',get_connection_peer_id:'identity',connection_test:'test',connection_save:'save'}[name];
+ const action={get_backend_health:'health',connection_status:'status',get_connection_peer_id:'identity',connection_test:'test',connection_save:'save'}[name];
  const r=await fetch(`/api/connection/${action}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(args)});if(!r.ok)throw Error(await r.text());return r.json();
 }
 function render(value){
+ byId('pool-health').replaceChildren();
  state=value;const c=value.config;
  document.querySelector(`input[name=mode][value=${c.endpoint.startsWith('discobox://')?'remote':'local'}]`).checked=true;
  byId('endpoint').value=c.endpoint;byId('project').value=c.project;byId('relays').value=(c.relays||[]).join('\n');modeChanged();
@@ -38,6 +39,22 @@ byId('show-boxes').onclick=()=>run(async()=>{
  if(!app){byId('status').textContent='Ask chat: “Show my Discobox boxes.”';return;}
  try{byId('status').textContent=await sendToChat(app,'Show my Discobox boxes.',[]);}
  catch(e){byId('status').textContent=e.copyPrompt?'Ask chat: “Show my Discobox boxes.”':e.message;}
+});
+byId('check-health').onclick=()=>run(async()=>{
+ const list=byId('pool-health');
+ list.replaceChildren();
+ const report=await call('get_backend_health');
+ if(!report.pools.length){list.textContent='No pools reported for this project.';return;}
+ for(const pool of report.pools){
+  const item=document.createElement('li');
+  const disk=pool.disk.freeGiB==null?'Disk free unknown':`${pool.disk.freeGiB.toFixed(1)} GiB free`;
+  const used=pool.disk.usedPercent==null?'':` (${pool.disk.usedPercent.toFixed(1)}% used)`;
+  const placement=pool.schedulable==null?'Scheduling unknown':pool.schedulable?'Accepts new boxes':'Closed to new boxes';
+  const memory=pool.poolMemory.availableBytes==null?'Available RAM unknown':`${(pool.poolMemory.availableBytes/2**30).toFixed(1)} GiB RAM available`;
+  const cpu=pool.totalUsage.cpuVcpus==null?'Total CPU usage unknown':`${pool.totalUsage.cpuVcpus.toFixed(1)} vCPUs in use`;
+  item.textContent=[pool.name||pool.id||'Pool',pool.health||'Health unknown',pool.degraded?'Degraded':null,placement,disk+used,memory,cpu,pool.sampledAt||pool.resourcesReportedAt||'Sample time unknown'].filter(Boolean).join(' · ');
+  list.append(item);
+ }
 });
 byId('identity').onclick=()=>run(async()=>{const value=await call('get_connection_peer_id');byId('peer-id').value=value.peerId;byId('enrollment-command').value=value.enrollmentCommand;byId('enrollment').hidden=false;});
 byId('copy').onclick=async()=>{const field=byId('enrollment-command');try{await navigator.clipboard.writeText(field.value);byId('status').textContent='Enrollment command copied. Run it on the intended server computer.';}catch{field.focus();field.select();byId('status').textContent='Copy the selected command manually, then run it on the server computer.';}};

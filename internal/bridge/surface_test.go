@@ -19,7 +19,7 @@ import (
 // The default surface is part of the contract with hosts and models. Change
 // these lists deliberately, together with docs/contract.md.
 var (
-	modelTools = []string{"archive_box", "close_service_forward", "connection_status", "control_box", "control_service", "get_connection_peer_id", "interrupt_box", "launch_box", "list_approval_requests", "list_attention", "list_box_files", "list_boxes", "list_service_forwards", "list_services", "open_approval", "open_box", "open_connection_setup", "open_service", "read_box", "read_box_file", "read_service_logs", "send_box", "test_connection", "wait_box"}
+	modelTools = []string{"archive_box", "close_service_forward", "connection_status", "control_box", "control_service", "get_backend_health", "get_connection_peer_id", "interrupt_box", "launch_box", "list_approval_requests", "list_attention", "list_box_files", "list_boxes", "list_service_forwards", "list_services", "open_approval", "open_box", "open_connection_setup", "open_service", "read_box", "read_box_file", "read_service_logs", "send_box", "test_connection", "wait_box"}
 	appTools   = []string{"approval_decide", "approval_list", "approval_review", "catalog_read", "connection_save", "connection_test", "desktop_action", "desktop_open", "desktop_read", "file_mkdir", "file_read", "file_stat", "file_upload", "service_keepalive", "service_logs", "service_open_browser", "terminal_action", "terminal_open", "terminal_read"}
 )
 
@@ -187,5 +187,37 @@ func TestBrowserUIIsOptIn(t *testing.T) {
 		if recorder.Code != http.StatusNotFound && recorder.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s served without --browser-ui: %d", path, recorder.Code)
 		}
+	}
+}
+
+func TestBackendHealthToolUsesActiveProject(t *testing.T) {
+	backend := testhttp.NewNetwork(t).NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects/research/pools" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"pools":[{"id":"lab","resources":{"storage":{"filesystem":{"freeBytes":3221225472}}}}]}`))
+	}))
+	defer backend.Close()
+	catalog, err := discobox.NewCatalog(backend.URL, "", "research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(catalog, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	client := mcpClient(t, ctx, s)
+	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "get_backend_health", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatal(result.Content)
+	}
+	b, err := json.Marshal(result.StructuredContent)
+	if err != nil || !strings.Contains(string(b), `"freeGiB":3`) {
+		t.Fatalf("health result %s, %v", b, err)
 	}
 }

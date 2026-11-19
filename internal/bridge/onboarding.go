@@ -99,6 +99,10 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		}
 		return result, status, nil
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "get_backend_health", Description: "Read project pool health, disk free GiB and percent used, CPU, RAM and placement capacity. Compare across configured servers before choosing a workload destination. Missing metrics are unknown. Check sample timestamps.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
+		report, err := s.backendHealth(ctx)
+		return nil, report, err
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "connection_status", Description: "Show the Discobox connection settings, the last test (with its layer-by-layer diagnosis), when backend traffic last succeeded or failed, and whether a restart is needed. Does not contact the backend; use test_connection for a fresh check.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
 		c, e := s.setupController()
 		if e != nil {
@@ -182,6 +186,14 @@ func (s *Server) onboardingTools(server *mcp.Server) {
 		}
 	})
 }
+func (s *Server) backendHealth(ctx context.Context) (map[string]any, error) {
+	client := s.backend()
+	if client == nil {
+		return nil, errors.New("set up a Discobox connection to read pool health")
+	}
+	return client.BackendHealth(ctx)
+}
+
 func (s *Server) setupHTTP(mux *http.ServeMux) {
 	mux.HandleFunc("GET /setup", func(w http.ResponseWriter, r *http.Request) {
 		html, e := web.SetupHTML()
@@ -202,6 +214,8 @@ func (s *Server) setupHTTP(mux *http.ServeMux) {
 		var in connection.Config
 		var value any
 		switch r.PathValue("action") {
+		case "health":
+			value, e = s.backendHealth(r.Context())
 		case "status":
 			value = c.Status()
 		case "identity":
