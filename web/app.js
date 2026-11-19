@@ -22,6 +22,7 @@ const reconnect = byId('reconnect');
 const share = byId('share');
 let app, connection, terminal, fit, socket, owned = false, connected = false;
 let appTerminal, generation = 0, rendererReady, createRequestId;
+let setupBoxId;
 let managerCatalog, selectedBoxId, selectedName, activeTab = 'terminal', inboxBusy = false;
 let stopped = false, inboxTimer, launchIntent, rendererCleanup;
 let inputQueue = Promise.resolve(), hostReady = false, fitTimer, lastResize, focusController, focusTimer, attaching, pendingControl;
@@ -285,7 +286,9 @@ async function appCall(name, args) {
   const result = await app.callServerTool({ name, arguments: args }, callTimeouts[name] ? { timeout: callTimeouts[name] } : undefined);
   if (result.isError) throw new Error(result.content?.find((item) => item.type === 'text')?.text || `${name} failed`);
   // Terminal handles and bytes arrive only in private _meta (never model context).
-  return result._meta?.terminal || result.structuredContent || JSON.parse(result.content.find((item) => item.type === 'text').text);
+  const text = result.content?.find(item => item.type === 'text')?.text;
+  const value = result._meta?.terminal || result.structuredContent || JSON.parse(text);
+  return value?.view === 'setup' ? { ...value, receiptText: result._meta?.connection?.receiptText || text } : value;
 }
 function closeApp() {
   clearTimeout(fitTimer); lastResize = undefined;
@@ -393,7 +396,37 @@ function detach() {
   connected = false;
   setControl(false);
 }
+function showSetup(value) {
+  if (byId('workspace').hidden) byId('manager-browser').hidden = true;
+  if (setupBoxId !== value.boxId) byId('setup-intent-summary').textContent = '';
+  setupBoxId = value.boxId;
+  if (value.requestedSetup) byId('setup-intent-summary').textContent = value.receiptText || '';
+  byId('setup-intent').hidden = Boolean(value.requestedSetup) || !byId('setup-intent-summary').textContent;
+  byId('setup-receipt').hidden = false;
+  byId('setup-summary').textContent = value.receiptText || `Continue with box ${setupBoxId}.`;
+  resizeWidget();
+}
+byId('setup-refresh').onclick = async () => {
+  const id = setupBoxId;
+  try {
+    const result = await workspaceCall('setup_status', {boxId: id});
+    if (id === setupBoxId) showSetup(result);
+  } catch (error) { report(error); }
+};
+byId('setup-open').onclick = async () => {
+  try {
+    await yieldInput();
+    await start(await workspaceCall('open_box', {boxId: setupBoxId}));
+  } catch (error) { report(error); }
+};
+byId('setup-browse').onclick = () => yieldInput().then(refreshManagers).catch(report);
+
 async function start(value) {
+  if (value?.view === 'setup') { showSetup(value); return; }
+  if (value?.session?.box && setupBoxId !== value.session.box) {
+    setupBoxId = undefined;
+    byId('setup-receipt').hidden = true;
+  }
   if(value?.view==='services'){await openFileWorkspace(value);return;}
   if(value?.view==='approvals') {
     if(byId('workspace').hidden&&byId('manager-browser').hidden)await refreshManagers();
@@ -406,6 +439,7 @@ async function start(value) {
     byId('inbox').hidden = false;
     await refreshInbox(); return;
   }
+  if (value?.view === 'boxes' && !value.inbox) { await refreshManagers(); return; }
   if (value?.view === 'managers' || value?.view === 'boxes' || value?.boxes || value?.managers) { showManagers(value); return; }
   if (!value?.session?.box) throw new Error('Choose a manager to open its terminal.');
   if (owned && connection?.session?.box !== value.session.box) throw new Error('Release control before switching managers.');
@@ -440,23 +474,25 @@ async function workspaceCall(name, args = {}) {
     const response = await fetch(`/api/files/${fileAction}`,{method:'POST',headers:{Authorization:`Bearer ${connection.token}`,'Content-Type':'application/json'},body:JSON.stringify(args)});
     const result = await response.json(); if(!response.ok) throw new Error(result.error || 'File request failed'); return result;
   }
-  const action = { list_managers: 'list', list_boxes: 'boxes', launch_box: 'launch', list_attention: 'attention', inspect_box: 'inspect', send_box:'message', send_manager: 'message', open_box:'connect', connect_manager: 'connect', create_manager: 'create', archive_box:'archive', archive_manager: 'archive' }[name];
+  const action = { list_managers: 'list', list_boxes: 'boxes', launch_box: 'launch', setup_status: 'setup-status', list_attention: 'attention', inspect_box: 'inspect', send_box:'message', send_manager: 'message', open_box:'connect', connect_manager: 'connect', create_manager: 'create', archive_box:'archive', archive_manager: 'archive' }[name];
   if (!action) throw new Error('This action is available in the chat app widget only.');
   const response = await fetch(`/api/managers/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${connection.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Manager operation failed');
   return result;
 }
-async function readCatalog(fresh = false) {
-  // The adapter keeps one catalog for every view; this reads its cache.
-  return app ? appCall('catalog_read', { fresh }) : workspaceCall('list_boxes');
+async function readCatalog(fresh = false, offset = 0) {
+  const input = { fresh, offset, includeArchived: byId('show-archived').checked };
+  return app ? appCall('catalog_read', input) : workspaceCall('list_boxes', input);
 }
-async function refreshManagers(fresh = true) {
-  showManagers(await readCatalog(fresh));
+async function refreshManagers(fresh = true, offset = 0) {
+  showManagers(await readCatalog(fresh, offset));
 }
 function showManagers(data) {
   if (owned) { report('Release control before browsing managers.'); return; }
   detach();
+  setupBoxId = undefined;
+  byId('setup-receipt').hidden = true;
   managerCatalog = data;
   notice.hidden = true;
   byId('manager-browser').hidden = false;
@@ -469,6 +505,11 @@ function showManagers(data) {
   shareWidgetAction('catalog_opened',{ boxCount:catalogBoxes(data).length, boxes:catalogBoxes(data).slice(0,50).map(box => ({ boxId:box.id,role:box.role,archived:box.archived })) });
   byId('hint').textContent = `Project ${data.project || connection?.session?.project || 'default'} · Closing a view leaves its boxes in Discobox. Opening a box connects live and may wake it.`;
   const list = byId('manager-list'); list.replaceChildren();
+  const offset = data.offset || 0;
+  byId('catalog-paging').hidden = !offset && data.nextOffset == null;
+  byId('catalog-previous').disabled = !offset;
+  byId('catalog-next').disabled = data.nextOffset == null;
+  byId('catalog-range').textContent = `${offset + 1}–${offset + catalogBoxes(data).length} of ${data.total}`;
   const visible = catalogBoxes(data).filter((manager) => !manager.archived || byId('show-archived').checked);
   if (!visible.length) { const empty = document.createElement('p'); empty.textContent = 'No active boxes yet. Start a task above, or show archived boxes.'; list.append(empty); }
   for (const manager of visible) {
@@ -485,6 +526,12 @@ function showManagers(data) {
     const open = document.createElement('button'); open.textContent = 'Open workspace'; open.disabled = !manager.accessible || manager.archived;
     open.onclick = async () => { open.disabled = true; try { await yieldInput(); await start({ ...await workspaceCall('open_box', { boxId: manager.id }), view: 'workspace' }); } catch (error) { report(error); open.disabled = false; } };
     actions.append(open);
+    if (manager.accessible && manager.repositoryBacked) {
+      actions.append(actionButton('Setup status', async () => {
+        await yieldInput();
+        showSetup(await workspaceCall('setup_status', {boxId: manager.id}));
+      }));
+    }
     if (manager.accessible && !manager.archived) {
       actions.append(confirmButton('Archive', 'Confirm archive', async () => {
         await workspaceCall('archive_box', { boxId: manager.id }); shareWidgetAction('archive_requested',{ boxId:manager.id }); await refreshManagers();
@@ -531,24 +578,37 @@ function actionButton(label, run) {
   return button;
 }
 byId('browse').onclick = () => yieldInput().then(refreshManagers).catch(report);
-byId('show-archived').onchange = () => { if (managerCatalog) showManagers(managerCatalog); };
+byId('show-archived').onchange = () => refreshManagers(false).catch(report);
+byId('catalog-previous').onclick = () => refreshManagers(false, Math.max(0, managerCatalog.offset - 20)).catch(report);
+byId('catalog-next').onclick = () => refreshManagers(false, managerCatalog.nextOffset).catch(report);
+const launchFields = ['manager-name', 'task', 'harness', 'model', 'pool', 'source-repo', 'source-branch', 'source-commit',
+  'setup-command', 'setup-settings', 'setup-issues', 'setup-prs', 'setup-base', 'setup-push', 'setup-actor', 'setup-api', 'setup-triage'];
 byId('refresh-managers').onclick = () => refreshManagers().catch(report);
 byId('create-button').onclick = async (event) => {
   event.preventDefault();
   const button = byId('create-button'), name = byId('manager-name'), task = byId('task');
-  if (!name.checkValidity() || !task.value.trim() || new TextEncoder().encode(task.value).length > 65536) { report('Add a task of at most 65536 bytes and use at most 64 letters, digits, underscores or hyphens for the optional name.'); return; }
+  const value = id => byId(id).value.trim();
+  const repository = value('source-repo'), entrypoint = value('setup-command');
+  if ((!repository && entrypoint) || (!entrypoint && launchFields.slice(9).some(id => byId(id).type === 'checkbox' ? byId(id).checked : value(id)))) {
+    report('Add a source repository and a setup command to use setup settings.'); return;
+  }
+  if (!name.checkValidity() || (!entrypoint && !task.value.trim()) || new TextEncoder().encode(task.value).length > 65536) { report('Add a task of at most 65536 bytes and use at most 64 letters, digits, underscores or hyphens for the optional name.'); return; }
   createRequestId ||= 'ui-' + Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  launchIntent ||= { requestId: createRequestId, name: name.value.trim(), task: task.value, harness: byId('harness').value.trim(), model: byId('model').value.trim(), pool: byId('pool').value.trim() };
+  launchIntent ||= { requestId: createRequestId, name: name.value.trim(), task: task.value, harness: byId('harness').value.trim(), model: byId('model').value.trim(), pool: value('pool'),
+    ...(repository && {source: { repository, branch: value('source-branch'), commit: value('source-commit') }}),
+    ...(entrypoint && {setup: {entrypoint, requestApi: byId('setup-api').checked, settingsRepository: value('setup-settings'),
+      issueRepository: value('setup-issues'), pullRequestRepository: value('setup-prs'), pullRequestBranch: value('setup-base'),
+      workerPushRepository: value('setup-push'), actor: value('setup-actor'), triageOnly: byId('setup-triage').checked}}) };
   // Freeze the exact intent until its outcome is known. An error does not imply
   // that creation failed, and changing settings must never create another box.
-  for (const id of ['manager-name','task','harness','model','pool']) byId(id).disabled = true;
+  for (const id of launchFields) byId(id).disabled = true;
   byId('creation-intent').hidden = false;
   byId('creation-intent').textContent = `Creation reference: ${createRequestId}. If interrupted, reuse this exact requestId and settings with launch_box; do not start another intent before checking your boxes.`;
   button.disabled = true; button.textContent = 'Starting box…'; notice.hidden = true; byId('discard-creation').hidden = true;
   let created;
   try {
     created = await workspaceCall('launch_box', launchIntent);
-    shareWidgetAction('box_launched',{ boxId:created.boxId || created.managerId, task:launchIntent.task.slice(0,2000), taskTruncated:launchIntent.task.length > 2000 });
+    shareWidgetAction('box_launched',{ boxId:created.boxId || created.managerId, ...(launchIntent.source && {source:launchIntent.source.repository, branch:launchIntent.source.branch}), setup:launchIntent.setup });
   } catch (error) {
     report(error); button.textContent = 'Check same creation'; byId('discard-creation').hidden = false;
     byId('creation-intent').textContent = `Creation reference: ${createRequestId}. Check same creation resubmits this exact intent. If Discobox rejected it, or you have checked your boxes and it was not created, discard it to edit the settings; discarding an intent that did create a box lets the next start create another.`;
@@ -556,6 +616,7 @@ byId('create-button').onclick = async (event) => {
   } finally { button.disabled = false; }
   endCreationIntent();
   name.value = ''; task.value = '';
+  if (created.view === 'setup') { showSetup(created); return; }
   // Once creation is confirmed, a catalog or view failure must not turn the
   // launch button into a retry of another creation.
   try { managerCatalog = await readCatalog(true); } catch (error) { report(error); }
@@ -565,7 +626,7 @@ byId('create-button').onclick = async (event) => {
 // The only way to leave a frozen creation intent is this explicit choice.
 function endCreationIntent() {
   createRequestId = undefined; launchIntent = undefined;
-  for (const id of ['manager-name','task','harness','model','pool']) byId(id).disabled = false;
+  for (const id of launchFields) byId(id).disabled = false;
   byId('create-button').textContent = 'Start box'; byId('creation-intent').hidden = true; byId('discard-creation').hidden = true;
 }
 byId('discard-creation').onclick = () => { if (!byId('create-button').disabled) endCreationIntent(); };
@@ -603,7 +664,11 @@ try {
     app.onhostcontextchanged=resizeWidget;
     watchVisibility();
     app.ontoolresult = (result) => {
-      const value = result._meta?.connection || result.structuredContent;
+      let value = result._meta?.connection || result.structuredContent;
+      if (value?.view === 'setup') {
+        value = {...result.structuredContent, ...value,
+          receiptText: value.receiptText || result.content?.find(item => item.type === 'text')?.text};
+      }
       if((value?.session||value?.view)&&humanUsingWidget()){
         shareWidgetAction('view_selection_blocked',{boxId:value.boxId,view:value.view});
         report(new Error('View selection paused while you are using this widget. Leave the input before asking chat to switch views.'));return;
@@ -672,20 +737,16 @@ async function refreshInbox() {
   if (inboxBusy || stopped || !widgetVisible) return;
   clearTimeout(inboxTimer); inboxBusy = true;
   try {
-    const { inbox } = app ? await readCatalog() : await workspaceCall('list_attention');
-    if (inbox.boxes) {
-      managerCatalog = { ...managerCatalog,boxes:inbox.boxes };
-      if (selectedBoxId) {
-        const current = inbox.boxes.find(box => box.id === selectedBoxId);
-        if (current) {
-          selectedName = current.name;
-          byId('box-title').textContent = selectedName;
-                  byId('box-state').textContent = describeBox(current);
-        }
-      }
+    const { inbox, boxes } = app ? await readCatalog() : await workspaceCall('list_attention');
+    const current = boxes?.find(box => box.id === selectedBoxId);
+    if (current) {
+      selectedName = current.name;
+      byId('box-title').textContent = selectedName;
+      byId('box-state').textContent = describeBox(current);
     }
-    byId('attention-count').textContent = inbox.items.length;
-    byId('inbox-coverage').textContent = `${inbox.coverage}. Updated ${new Date().toLocaleTimeString()}. ${inbox.warning || ''}`;
+    byId('attention-count').textContent = inbox.total ?? inbox.items.length;
+    const showing = inbox.total > inbox.items.length ? ` Showing ${inbox.items.length} of ${inbox.total}.` : '';
+    byId('inbox-coverage').textContent = `${inbox.coverage}.${showing} Updated ${new Date().toLocaleTimeString()}. ${inbox.warning || ''}`;
     byId('inbox-items').replaceChildren();
     if (!inbox.items.length) { const p = document.createElement('p'); p.textContent = 'No attention items within this connection’s coverage.'; byId('inbox-items').append(p); }
     for (const item of inbox.items) {

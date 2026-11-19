@@ -15,19 +15,20 @@ import (
 // Manager is a visible box, independent of its role, tags, or connected views.
 // The type name is retained for compatibility with the original adapter.
 type Manager struct {
-	projectID  string
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	State      string         `json:"state"`
-	Parent     string         `json:"parent,omitempty"`
-	Accessible bool           `json:"accessible"`
-	Archived   bool           `json:"archived"`
-	Role       string         `json:"role"`
-	Task       string         `json:"task,omitempty"`
-	Harness    string         `json:"harness,omitempty"`
-	Model      string         `json:"model,omitempty"`
-	Program    map[string]any `json:"program,omitempty"`
-	ObservedAt string         `json:"observedAt,omitempty"`
+	projectID        string
+	ID               string         `json:"id"`
+	Name             string         `json:"name"`
+	State            string         `json:"state"`
+	Parent           string         `json:"parent,omitempty"`
+	Accessible       bool           `json:"accessible"`
+	Archived         bool           `json:"archived"`
+	RepositoryBacked bool           `json:"repositoryBacked,omitempty"`
+	Role             string         `json:"role"`
+	Task             string         `json:"task,omitempty"`
+	Harness          string         `json:"harness,omitempty"`
+	Model            string         `json:"model,omitempty"`
+	Program          map[string]any `json:"program,omitempty"`
+	ObservedAt       string         `json:"observedAt,omitempty"`
 }
 
 func NewCatalog(endpoint, token, project string) (*Client, error) {
@@ -67,7 +68,7 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 			continue
 		}
 		id, _ := box["id"].(string)
-		if !identifier.MatchString(id) {
+		if !identifier.MatchString(id) || len(id) > 128 {
 			return nil, errors.New("invalid box ID in listing")
 		}
 		runtime, _ := box["runtime"].(map[string]any)
@@ -111,6 +112,7 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 		entry := Manager{ID: id, Name: name, State: state, Parent: parentID, Accessible: parent == "" || parentID == parent, Archived: desired == "archived", Role: roleOf(box)}
 		entry.projectID = textField(box, "projectId")
 		config, _ := box["config"].(map[string]any)
+		entry.RepositoryBacked = member(config, "source") != nil
 		if entry.Role != managerTagValue {
 			entry.Role = "box"
 			if prompt, ok := config["prompt"].([]any); ok {
@@ -149,7 +151,7 @@ func (c *Client) listBoxes(ctx context.Context, parent string, managersOnly bool
 }
 
 func (c *Client) managerBox(ctx context.Context, id, parent string) (map[string]any, error) {
-	if !identifier.MatchString(id) {
+	if !identifier.MatchString(id) || len(id) > 128 {
 		return nil, errors.New("invalid box ID")
 	}
 	box, err := c.request(ctx, http.MethodGet, "/projects/"+c.Session.Project+"/sandboxes/"+id, nil)
@@ -198,19 +200,27 @@ func (c *Client) CreateManager(ctx context.Context, requestID string, options Ma
 		base = options.StatePath
 	}
 	key := sha256.Sum256([]byte(c.endpoint + "\n" + c.Session.Project + "\n" + options.Parent + "\n" + requestID))
-	intentData, err := json.Marshal([]string{options.Name, options.Harness, options.Pool, options.Task, options.Model, options.Role})
+	fields := []any{options.Name, options.Harness, options.Pool, options.Task, options.Model, options.Role}
+	if options.Source != nil {
+		fields = append(fields, options.Source)
+	}
+	intentData, err := json.Marshal(fields)
 	if err != nil {
 		return nil, err
 	}
 	intent := sha256.Sum256(intentData)
 	// Existing manager intents retain their original hash across adapter upgrades.
-	if options.Task == "" && options.Model == "" && options.Role == "" {
+	if options.Task == "" && options.Model == "" && options.Role == "" && options.Source == nil {
 		intent = sha256.Sum256([]byte(options.Name + "\n" + options.Harness + "\n" + options.Pool))
 	}
 	options.StatePath = filepath.Join(filepath.Dir(base), "creations", hex.EncodeToString(key[:16])+".json")
 	options.CreateOnly = true
 	options.Intent = hex.EncodeToString(intent[:])
-	return EnsureManager(ctx, c.endpoint, c.token, c.Session.Project, options)
+	if err := validateManagerOptions(c.Session.Project, options); err != nil {
+		return nil, err
+	}
+	return ensureManager(ctx, &Client{endpoint: c.endpoint, base: c.base, http: c.http, token: c.token,
+		Session: Session{Project: c.Session.Project, Exec: "primary"}}, options)
 }
 
 func (c *Client) ArchiveManager(ctx context.Context, id, parent string) error {

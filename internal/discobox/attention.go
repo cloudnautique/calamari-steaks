@@ -89,6 +89,9 @@ func (c *Client) Attention(ctx context.Context, parent string) (Inbox, error) {
 			request, _ = item[kind].(map[string]any)
 		}
 		id, boxID := textField(request, "id"), textField(request, "sandboxId")
+		if kind == "apiAccess" {
+			boxID = textField(request, "requesterSandboxId")
+		}
 		box, known := allowed[boxID]
 		if !known || !identifier.MatchString(id) || textField(request, "status") != "pending" {
 			continue

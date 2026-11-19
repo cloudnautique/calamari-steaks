@@ -28,7 +28,8 @@ type ManagerOptions struct {
 	Harness   string
 	Task      string
 	Model     string
-	Role      string // Empty preserves the legacy manager launch. "box" launches a task without API access.
+	Role      string // Empty preserves legacy manager launch. Explicit roles launch without API access.
+	Source    *RepositorySource
 	Pool      string
 	// Parent is the calling sandbox in local API mode. Reuse only managers
 	// currently led by it; the server enforces authority again per request.
@@ -82,10 +83,15 @@ func validateManagerOptions(project string, options ManagerOptions) error {
 	if options.Name != "" && (!identifier.MatchString(options.Name) || len(options.Name) > 64) {
 		return errors.New("manager name must contain 1 to 64 letters, digits, underscores or hyphens")
 	}
-	if options.Role != "" && options.Role != "box" {
+	if options.Role != "" && options.Role != "box" && options.Role != "manager" {
 		return errors.New("invalid launch role")
 	}
-	if len(options.Task) > 64<<10 || !utf8.ValidString(options.Task) || (options.Role == "box" && strings.TrimSpace(options.Task) == "") {
+	if options.Source != nil {
+		if err := options.Source.Validate(); err != nil {
+			return err
+		}
+	}
+	if len(options.Task) > 64<<10 || !utf8.ValidString(options.Task) || (options.Role != "" && strings.TrimSpace(options.Task) == "") {
 		return errors.New("task must contain 1 to 65536 bytes of valid text")
 	}
 	if len(options.Model) > 128 {
@@ -179,6 +185,15 @@ func ensureManager(ctx context.Context, c *Client, options ManagerOptions) (*Cli
 				}
 			}
 		}
+		var source map[string]any
+		if options.Source != nil {
+			resolveCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			source, err = options.Source.config(resolveCtx)
+			cancel()
+			if err != nil {
+				return nil, err
+			}
+		}
 		var nonce [6]byte
 		if _, err := rand.Read(nonce[:]); err != nil {
 			return nil, err
@@ -199,6 +214,8 @@ func ensureManager(ctx context.Context, c *Client, options ManagerOptions) (*Cli
 		if options.Role == "box" {
 			prompt = options.Task
 			description = "Task launched through the Discobox MCP adapter"
+		} else if options.Role == "manager" {
+			prompt = options.Task
 		} else if options.Task != "" {
 			prompt += "\n\nFirst task from the person:\n" + options.Task
 		}
@@ -206,14 +223,17 @@ func ensureManager(ctx context.Context, c *Client, options ManagerOptions) (*Cli
 		if options.Model != "" {
 			config["model"] = options.Model
 		}
-		body := map[string]any{"discoboxApi": options.Role != "box", "config": config}
+		if source != nil {
+			config["source"] = source
+		}
+		body := map[string]any{"discoboxApi": options.Role == "", "config": config}
 		if options.Harness != "" {
 			body["harnessName"] = options.Harness
 		}
 		if options.Pool != "" {
 			body["poolId"] = options.Pool
 		}
-		progress("Creating manager " + record.Name + " with Discobox API access")
+		progress("Creating box " + record.Name)
 		box, err := c.request(ctx, http.MethodPost, "/projects/"+project+"/sandboxes", body)
 		if err != nil {
 			if rejectedBeforeCommit(err) {
@@ -243,6 +263,23 @@ func ensureManager(ctx context.Context, c *Client, options ManagerOptions) (*Cli
 			return nil, fmt.Errorf("created manager %s saved: %w", record.Box, err)
 		}
 		progress("Created manager " + record.Box + "; waiting for its primary session")
+	}
+	if options.Source != nil {
+		// A repository may still be awaiting source delivery. Its durable ID
+		// is the receipt even if the primary session is unavailable.
+		primaryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := c.ResolvePrimary(primaryCtx)
+		cancel()
+		if err != nil {
+			c.Session.Exec = ""
+		}
+		if needsTag && c.Session.Exec != "" {
+			tagCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			_, _ = c.request(tagCtx, http.MethodPatch, "/projects/"+project+"/sandboxes/"+c.Session.Box+"/meta",
+				map[string]any{"setTags": map[string]string{managerTagKey: launchRole(options)}})
+		}
+		return c, nil
 	}
 	if c.Session.Exec == "primary" {
 		waitCtx, cancel := ctx, context.CancelFunc(func() {})

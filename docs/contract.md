@@ -18,7 +18,7 @@ surface fails a test until this page and the test agree.
 
 | Area | Tools |
 | --- | --- |
-| Boxes | `list_boxes`, `launch_box`, `open_box`, `read_box`, `send_box`, `wait_box`, `interrupt_box`, `archive_box`, `control_box`, `list_attention` |
+| Boxes | `list_boxes`, `launch_box`, `setup_status`, `open_box`, `read_box`, `send_box`, `wait_box`, `interrupt_box`, `archive_box`, `control_box`, `list_attention` |
 | Files | `list_box_files`, `read_box_file` |
 | Services | `list_services`, `control_service`, `open_service`, `close_service_forward`, `list_service_forwards`, `read_service_logs` |
 | Approvals | `open_approval`, `list_approval_requests` |
@@ -48,6 +48,21 @@ everywhere else.
 5. `send_box(boxId, text, submit)` → returns `resumeAfter`. Fails with
    `human_has_control: …` while a person holds input in the widget.
 
+### Repository setup
+
+1. Call `launch_box` with `source.repository` and `source.branch`. A public
+   branch can resolve anonymously or the caller can supply `source.commit`.
+   Optional `setup` sets the repository entrypoint and intended settings.
+   The launch receipt identifies the box and distinguishes requested settings
+   from source or API state observed upstream.
+2. Keep the returned `boxId`. Call `setup_status(boxId)` for delivery and
+   approval blockers and recheck it after a console decision. The manager
+   requests API access from its own box. Grants follow Discobox authority.
+3. Use `open_box` or `read_box` and `send_box` on the same ID to continue the
+   repository's setup dialogue. Setup, watcher, worker and CI observations are
+   reported by the box when it publishes the setup status file. See the
+   [prototype report](repo-manager-setup.md) for coverage and the fixture demo.
+
 ### Sessions
 
 The adapter pins each box's primary terminal session. `open_box` re-resolves
@@ -73,9 +88,9 @@ they may still log the traffic.
 
 ## Resources
 
-- Listed: `ui://discobox/workspace-v16.html`, `ui://discobox/connection-v3.html`.
+- Listed: `ui://discobox/workspace-v17.html`, `ui://discobox/connection-v3.html`.
 - Template `ui://discobox/{bundle}` serves earlier bundle names
-  (`workspace-v4`…`v15`, `manager*.html`, `connection-v1/v2`) for restored
+  (`workspace-v4`…`v16`, `manager*.html`, `connection-v1/v2`) for restored
   conversations; unknown names are not found.
 - Template `discobox-file://{project}/{boxId}/{+path}`: files up to 1 MiB.
 
@@ -96,7 +111,9 @@ they may still log the traffic.
 
 | Item | Limit |
 | --- | --- |
-| `launch_box` | ≤ 50 s; waits ≤ 20 s for the session, then reports `starting` |
+| `launch_box` | ≤ 50 s. Repository launches return the box receipt before provisioning completes. Empty workspace launches wait ≤ 20 s for a session |
+| `setup_status` | Up to 12 s. Five requests per approval type and one bounded setup report |
+| App catalog | 20 boxes and up to 12 inbox items per read |
 | `wait_box` | 1–45 s per call (default 30) |
 | Terminal attach | 45 s |
 | Terminal views | 8 per adapter (LRU), 90 s idle, 1 MiB buffer |
@@ -104,7 +121,7 @@ they may still log the traffic.
 | Uploads | 4 concurrent, 16 MiB each; replace only at a confirmed version |
 | Forwards | 8 per adapter; 32 connections each plus 64 queued for 15 s; expire after 15 min idle (2 h while connections are open); revalidated every 30 s |
 | Catalog response | 32 MiB upstream; other upstream JSON 2 MiB |
-| Model `list_boxes` | 50 boxes per page (max 200), 200-character task previews |
+| Model `list_boxes` | Up to 50 boxes by default (requested max 200), 24 KiB page budget |
 
 ## Connection setup
 

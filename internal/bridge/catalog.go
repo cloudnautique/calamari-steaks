@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -196,8 +197,8 @@ func truncateText(text string, limit int) string {
 }
 
 func summarizeBox(box discobox.Manager) boxSummary {
-	return boxSummary{ID: box.ID, Name: truncateText(box.Name, 120), Role: box.Role, State: box.State, Program: textOf(box.Program, "state"), Message: truncateText(textOf(box.Program, "msg"), 160),
-		ObservedAt: box.ObservedAt, Harness: box.Harness, TaskPreview: truncateText(box.Task, 200), Archived: box.Archived, NeedsLeader: !box.Accessible}
+	return boxSummary{ID: box.ID, Name: truncateText(box.Name, 120), Role: box.Role, State: truncateText(box.State, 48), Program: truncateText(textOf(box.Program, "state"), 48), Message: truncateText(textOf(box.Program, "msg"), 160),
+		ObservedAt: truncateText(box.ObservedAt, 40), Harness: truncateText(box.Harness, 64), TaskPreview: truncateText(box.Task, 200), Archived: box.Archived, NeedsLeader: !box.Accessible}
 }
 
 func textOf(m map[string]any, key string) string { value, _ := m[key].(string); return value }
@@ -236,7 +237,17 @@ func boxPage(boxes []discobox.Manager, input listBoxesInput) (map[string]any, er
 	}
 	total := len(matches)
 	start := min(input.Offset, total)
-	end := min(start+input.Limit, total)
+	end, size := start, 0
+	for end < min(start+input.Limit, total) {
+		box := matches[end]
+		encoded, _ := json.Marshal(box)
+		line, _ := json.Marshal(boxTable(matches[end : end+1]))
+		size += len(encoded) + len(line) + 16
+		if end > start && size > 24<<10 {
+			break
+		}
+		end++
+	}
 	page := map[string]any{"boxes": matches[start:end], "total": total}
 	if end < total {
 		page["nextOffset"] = end

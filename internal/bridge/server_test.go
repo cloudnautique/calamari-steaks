@@ -150,7 +150,7 @@ func TestManagerToolsAndHumanHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 57 { // 44 default tools plus 13 legacy aliases
+	if len(listed.Tools) != 58 { // 45 default tools plus 13 legacy aliases
 		t.Fatalf("tools: %d", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {

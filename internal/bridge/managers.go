@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -40,12 +41,14 @@ type managerInput struct {
 	ManagerID string `json:"managerId,omitempty" jsonschema:"Box ID for either role (legacy parameter name). Omit only when the adapter has an explicit startup default."`
 }
 type createInput struct {
-	RequestID string `json:"requestId" jsonschema:"Stable key for this one creation intent. Reuse the same key after disconnection; never retry an uncertain creation with a different key."`
-	Name      string `json:"name,omitempty" jsonschema:"Optional name: at most 64 letters, digits, underscores or hyphens"`
-	Harness   string `json:"harness,omitempty"`
-	Pool      string `json:"pool,omitempty"`
-	Task      string `json:"task,omitempty" jsonschema:"Starting task. Required for launch_box."`
-	Model     string `json:"model,omitempty" jsonschema:"Optional model override for this run only."`
+	Source    *discobox.RepositorySource `json:"source,omitempty"`
+	Setup     *setupInput                `json:"setup,omitempty" jsonschema:"Optional repository setup settings. Starts a manager and leaves grants to the upstream approval flow."`
+	RequestID string                     `json:"requestId" jsonschema:"Stable key for this one creation intent. Reuse the same key after disconnection; never retry an uncertain creation with a different key."`
+	Name      string                     `json:"name,omitempty" jsonschema:"Optional name: at most 64 letters, digits, underscores or hyphens"`
+	Harness   string                     `json:"harness,omitempty"`
+	Pool      string                     `json:"pool,omitempty"`
+	Task      string                     `json:"task,omitempty" jsonschema:"Starting task. Required for launch_box."`
+	Model     string                     `json:"model,omitempty" jsonschema:"Optional model override for this run only."`
 }
 
 // Launch returns well inside the hosts' ~60 s tool budget. A box whose
@@ -164,6 +167,17 @@ func (s *Server) launch(ctx context.Context, input createInput, role string) (ma
 	options := s.managerOptions
 	options.Name = input.Name
 	options.Task, options.Model, options.Role = input.Task, input.Model, role
+	options.Source = input.Source
+	if input.Setup != nil {
+		if input.Source == nil {
+			return nil, errors.New("repository setup needs an explicit source")
+		}
+		if err := input.Setup.validate(); err != nil {
+			return nil, err
+		}
+		options.Task = input.Setup.prompt(input.Task)
+		options.Role = "manager"
+	}
 	options.PrimaryWait = launchPrimaryWait
 	if input.Harness != "" {
 		options.Harness = input.Harness
@@ -177,6 +191,20 @@ func (s *Server) launch(ctx context.Context, input createInput, role string) (ma
 	}
 	s.invalidateCatalog()
 	id := client.Session.Box
+	if input.Source != nil {
+		data := map[string]any{"view": "setup", "session": client.Session, "boxId": id,
+			"requestedSource": input.Source, "returnTool": "open_box", "requestId": input.RequestID}
+		if input.Setup != nil {
+			data["requestedSetup"] = input.Setup
+			data["requestedRole"] = "manager"
+		}
+		observationCtx, stop := context.WithTimeout(ctx, 3*time.Second)
+		defer stop()
+		if observation, err := client.ObserveSetup(observationCtx, id, options.Parent, false); err == nil {
+			data["observation"] = observation
+		}
+		return data, nil
+	}
 	if client.Session.Exec == "" {
 		return map[string]any{"view": "terminal", "session": client.Session, "managerId": id, "boxId": id, "transport": "mcp", "terminal": "starting",
 			"message": "Box created and still starting. The widget connects when its session appears. From text, call open_box or read_box shortly; wait_box needs a session."}, nil
@@ -289,7 +317,11 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch r.PathValue("action") {
 	case "boxes":
-		data, err = s.listBoxes(r.Context())
+		var input catalogReadInput
+		err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input)
+		if err == nil || errors.Is(err, io.EOF) {
+			data, err = s.listBoxes(r.Context(), input)
+		}
 	case "attention":
 		data, err = s.attention(r.Context())
 	case "message":
@@ -328,6 +360,19 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10)).Decode(&input)
 		if err == nil {
 			data, err = s.launch(r.Context(), input, "box")
+			if err == nil && input.Source != nil {
+				data["receiptText"] = launchReceipt(data, input)
+			}
+		}
+	case "setup-status":
+		var input boxInput
+		err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input)
+		if err == nil {
+			var summary string
+			data, summary, err = s.setupStatus(r.Context(), input.BoxID)
+			if err == nil {
+				data["receiptText"] = summary
+			}
 		}
 	case "list":
 		data, err = s.listManagers(r.Context())
@@ -370,30 +415,70 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(data)
 }
 
-const widgetTaskLimit = 8 << 10
+const widgetTaskLimit = 240
 
-// widgetBoxes bounds per-box task text sent to the widget.
-func widgetBoxes(boxes []discobox.Manager) []discobox.Manager {
-	result := make([]discobox.Manager, len(boxes))
-	for i, box := range boxes {
-		if len(box.Task) > widgetTaskLimit {
-			box.Task = truncateText(box.Task, widgetTaskLimit)
+func widgetCatalog(inbox discobox.Inbox, input catalogReadInput, project string) map[string]any {
+	const pageSize = 20
+	boxes := []discobox.Manager{}
+	offset := max(input.Offset, 0)
+	total := 0
+	for _, box := range inbox.Boxes {
+		if box.Archived && !input.IncludeArchived {
+			continue
 		}
-		result[i] = box
+		total++
+		if total <= offset || len(boxes) == pageSize {
+			continue
+		}
+		box.Name = truncateText(box.Name, 120)
+		box.Task = truncateText(box.Task, widgetTaskLimit)
+		box.State = truncateText(box.State, 48)
+		box.Harness = truncateText(box.Harness, 64)
+		box.Model = ""
+		box.Parent = "" // Accessible already captures the current caller's relationship.
+		box.ObservedAt = truncateText(box.ObservedAt, 40)
+		box.Program = map[string]any{"state": truncateText(textOf(box.Program, "state"), 32), "msg": truncateText(textOf(box.Program, "msg"), 120)}
+		if payload, _ := json.Marshal(box); len(payload) > 768 {
+			box.Task = ""
+			box.Program = map[string]any{"state": truncateText(textOf(box.Program, "state"), 32)}
+			box.Name = truncateText(box.Name, 48)
+		}
+		boxes = append(boxes, box)
 	}
-	return result
+	items := make([]discobox.Attention, 0, min(12, len(inbox.Items)))
+	for _, item := range inbox.Items[:min(12, len(inbox.Items))] {
+		item.Reason = truncateText(item.Reason, 160)
+		item.BoxName = truncateText(item.BoxName, 120)
+		item.Title = truncateText(item.Title, 120)
+		item.Scope, item.TTL = nil, nil // load the exact scope in approval review
+		item.CreatedAt = truncateText(item.CreatedAt, 40)
+		item.ObservedAt = truncateText(item.ObservedAt, 40)
+		if payload, _ := json.Marshal(item); len(payload) > 512 {
+			item.Reason = ""
+			item.BoxName = truncateText(item.BoxName, 40)
+			item.Title = truncateText(item.Title, 40)
+		}
+		items = append(items, item)
+	}
+	data := map[string]any{"view": "boxes", "boxes": boxes, "project": project, "offset": offset, "total": total,
+		"inbox": map[string]any{"items": items, "total": len(inbox.Items), "coverage": inbox.Coverage, "warning": inbox.Warning}}
+	if offset < total && total-offset > len(boxes) {
+		data["nextOffset"] = offset + len(boxes)
+	}
+	return data
 }
 
-// listBoxes is the widget's full catalog.
-func (s *Server) listBoxes(ctx context.Context) (map[string]any, error) {
+func (s *Server) listBoxes(ctx context.Context, input catalogReadInput) (map[string]any, error) {
 	inbox, err := s.snapshot(ctx, catalogModelAge)
-	return map[string]any{"view": "boxes", "boxes": widgetBoxes(inbox.Boxes), "project": s.backend().Session.Project}, err
+	return widgetCatalog(inbox, input, s.backend().Session.Project), err
 }
+
 func (s *Server) attention(ctx context.Context) (map[string]any, error) {
-	inbox, err := s.snapshot(ctx, catalogModelAge)
-	inbox.Boxes = widgetBoxes(inbox.Boxes)
-	return map[string]any{"view": "attention", "inbox": inbox}, err
+	data, err := s.listBoxes(ctx, catalogReadInput{})
+	data["view"] = "attention"
+	return data, err
 }
+
 func (s *Server) inspectBox(ctx context.Context, id string) (map[string]any, error) {
 	// Resolve pins the exec but never attaches to it. Screen reads do not wake it.
 	manager, err := s.manager(ctx, id)
@@ -430,6 +515,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 			return nil, nil, err
 		}
 		page["project"] = s.backend().Session.Project
+		page["view"] = "boxes"
 		boxes := page["boxes"].([]boxSummary)
 		text := fmt.Sprintf("%d of %d matching boxes in project %s", len(boxes), page["total"], s.backend().Session.Project)
 		if hidden, ok := page["archivedHidden"]; ok {
@@ -439,12 +525,16 @@ func (s *Server) boxTools(server *mcp.Server) {
 			text += fmt.Sprintf("; more with offset %d", next)
 		}
 		text += ". Task previews are truncated; read_box shows a box's terminal.\n" + boxTable(boxes)
-		return modelResult(text, page, map[string]any{"view": "boxes", "boxes": widgetBoxes(inbox.Boxes), "project": s.backend().Session.Project})
+		return modelResult(text, page, map[string]any{"view": "boxes", "project": s.backend().Session.Project})
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "launch_box", Description: "Launch a task in a separate box using a harness and optional model/pool. Settings apply to this run only. Starts with an empty workspace and no Discobox API access or explicit credential bindings. Keep requestId for this exact intent; never retry uncertain creation using a new ID. Use returned boxId with read_box/send_box/wait_box/interrupt_box for direct text interaction.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, input createInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "launch_box", Description: "Start a box from a GitHub source/branch or an empty workspace. Optional setup starts a manager using the repository entrypoint and intended settings. Grants are decided upstream. Keep requestId and settings for retries. For repository setup, use setup_status, then open_box or read_box with the returned boxId. No catalog lookup needed.", Meta: ui}, func(ctx context.Context, _ *mcp.CallToolRequest, input createInput) (*mcp.CallToolResult, map[string]any, error) {
 		data, err := s.launch(ctx, input, "box")
 		if err != nil {
 			return nil, nil, err
+		}
+		if input.Source != nil {
+			text := launchReceipt(data, input)
+			return modelResult(text, data, map[string]any{"view": "setup", "boxId": data["boxId"], "receiptText": text})
 		}
 		return workspaceResult(data)
 	})
@@ -453,10 +543,8 @@ func (s *Server) boxTools(server *mcp.Server) {
 		if err != nil {
 			return nil, nil, err
 		}
-		items := inbox.Items
-		if len(items) > 50 {
-			items = items[:50]
-		}
+		compact := widgetCatalog(inbox, catalogReadInput{}, s.backend().Session.Project)
+		items := compact["inbox"].(map[string]any)["items"].([]discobox.Attention)
 		var text strings.Builder
 		fmt.Fprintf(&text, "%d item(s) need attention. Coverage: %s.", len(inbox.Items), inbox.Coverage)
 		if inbox.Warning != "" {
@@ -474,9 +562,7 @@ func (s *Server) boxTools(server *mcp.Server) {
 			text.WriteString("\n")
 		}
 		structured := map[string]any{"items": items, "total": len(inbox.Items), "coverage": inbox.Coverage, "warning": inbox.Warning}
-		full := inbox
-		full.Boxes = widgetBoxes(inbox.Boxes)
-		return modelResult(text.String(), structured, map[string]any{"view": "attention", "inbox": full})
+		return modelResult(text.String(), structured, map[string]any{"view": "attention"})
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "catalog_read", Description: "App-only: the shared box catalog and inbox for the widget, served from the adapter's cache.", Meta: mcp.Meta{"ui": map[string]any{"visibility": []string{"app"}}}, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, _ *mcp.CallToolRequest, input catalogReadInput) (*mcp.CallToolResult, map[string]any, error) {
 		s.watchCatalog()
@@ -488,11 +574,12 @@ func (s *Server) boxTools(server *mcp.Server) {
 		if err != nil {
 			return nil, nil, err
 		}
-		inbox.Boxes = widgetBoxes(inbox.Boxes)
-		return nil, map[string]any{"view": "boxes", "boxes": inbox.Boxes, "inbox": inbox, "project": s.backend().Session.Project}, nil
+		return modelResult("Box catalog page for the widget.", widgetCatalog(inbox, input, s.backend().Session.Project), nil)
 	})
 }
 
 type catalogReadInput struct {
-	Fresh bool `json:"fresh,omitempty"`
+	Fresh           bool `json:"fresh,omitempty"`
+	Offset          int  `json:"offset,omitempty"`
+	IncludeArchived bool `json:"includeArchived,omitempty"`
 }

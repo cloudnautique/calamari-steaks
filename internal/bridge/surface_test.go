@@ -19,7 +19,7 @@ import (
 // The default surface is part of the contract with hosts and models. Change
 // these lists deliberately, together with docs/contract.md.
 var (
-	modelTools = []string{"archive_box", "close_service_forward", "connection_status", "control_box", "control_service", "get_backend_health", "get_connection_peer_id", "interrupt_box", "launch_box", "list_approval_requests", "list_attention", "list_box_files", "list_boxes", "list_service_forwards", "list_services", "open_approval", "open_box", "open_connection_setup", "open_service", "read_box", "read_box_file", "read_service_logs", "send_box", "test_connection", "wait_box"}
+	modelTools = []string{"archive_box", "close_service_forward", "connection_status", "control_box", "control_service", "get_backend_health", "get_connection_peer_id", "interrupt_box", "launch_box", "list_approval_requests", "list_attention", "list_box_files", "list_boxes", "list_service_forwards", "list_services", "open_approval", "open_box", "open_connection_setup", "open_service", "read_box", "read_box_file", "read_service_logs", "send_box", "setup_status", "test_connection", "wait_box"}
 	appTools   = []string{"approval_decide", "approval_list", "approval_review", "catalog_read", "connection_save", "connection_test", "desktop_action", "desktop_open", "desktop_read", "file_mkdir", "file_read", "file_stat", "file_upload", "service_keepalive", "service_logs", "service_open_browser", "terminal_action", "terminal_open", "terminal_read"}
 )
 
@@ -59,7 +59,7 @@ func TestToolSurfaceSnapshot(t *testing.T) {
 	init := client.InitializeResult()
 	total := modelBytes + len(init.Instructions)
 	t.Logf("model-visible tool schemas %d B, instructions %d B", modelBytes, len(init.Instructions))
-	if len(init.Instructions) > 1600 || total > 18<<10 {
+	if len(init.Instructions) > 1600 || total > 20<<10 {
 		t.Errorf("model-visible surface grew: schemas %d B + instructions %d B", modelBytes, len(init.Instructions))
 	}
 	if init.ServerInfo.Name != "discobox" {
@@ -79,7 +79,7 @@ func TestLegacyUIResourcesStillResolve(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := mcpClient(t, ctx, s)
-	for _, uri := range []string{uiResource, "ui://discobox/workspace-v13.html", "ui://discobox/manager.html", setupResourceURI, "ui://discobox/connection-v2.html", "ui://discobox/connection-v1.html"} {
+	for _, uri := range []string{uiResource, "ui://discobox/workspace-v16.html", "ui://discobox/workspace-v13.html", "ui://discobox/manager.html", setupResourceURI, "ui://discobox/connection-v2.html", "ui://discobox/connection-v1.html"} {
 		result, err := client.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
 		if err != nil || len(result.Contents) != 1 || !strings.Contains(result.Contents[0].Text, "<") || result.Contents[0].URI != uri {
 			t.Errorf("%s: %v", uri, err)
@@ -138,7 +138,8 @@ func TestModelCatalogIsBoundedAndCached(t *testing.T) {
 		t.Fatal(err, result.Content[0].(*mcp.TextContent).Text)
 	}
 	visible, _ := json.Marshal(map[string]any{"content": result.Content, "structured": result.StructuredContent})
-	if len(visible) > 32<<10 {
+	t.Logf("model catalog page: %d B", len(visible))
+	if len(visible) > 25<<10 {
 		t.Fatalf("model-visible list_boxes is %d bytes for 100 boxes", len(visible))
 	}
 	var page struct {
@@ -149,7 +150,7 @@ func TestModelCatalogIsBoundedAndCached(t *testing.T) {
 	}
 	raw, _ := json.Marshal(result.StructuredContent)
 	json.Unmarshal(raw, &page)
-	if page.Total != 90 || len(page.Boxes) != 50 || page.NextOffset != 50 || page.ArchivedHidden != 10 {
+	if page.Total != 90 || len(page.Boxes) == 0 || page.NextOffset != len(page.Boxes) || page.ArchivedHidden != 10 {
 		t.Fatalf("paging: total=%d page=%d next=%d archived=%d", page.Total, len(page.Boxes), page.NextOffset, page.ArchivedHidden)
 	}
 	if len(page.Boxes[0].TaskPreview) > 210 {
@@ -160,15 +161,22 @@ func TestModelCatalogIsBoundedAndCached(t *testing.T) {
 		t.Fatal("needsAttention filter", err)
 	}
 	for range 3 {
-		if _, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "catalog_read", Arguments: map[string]any{}}); err != nil {
-			t.Fatal(err)
+		appPage, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "catalog_read", Arguments: map[string]any{"offset": 20}})
+		if err != nil || appPage.IsError {
+			t.Fatal("app catalog page failed", err)
 		}
+		wire, _ := json.Marshal(appPage)
+		boxes, _ := appPage.StructuredContent.(map[string]any)["boxes"].([]any)
+		if len(boxes) != 20 || len(wire) > 24<<10 {
+			t.Fatalf("app catalog page has %d boxes and %d bytes", len(boxes), len(wire))
+		}
+		t.Logf("app catalog page on the wire: %d B", len(wire))
 	}
 	if lists != 1 {
 		t.Fatalf("cached catalog was fetched %d times", lists)
 	}
 	widget, _ := json.Marshal(result.Meta["connection"])
-	if !strings.Contains(string(widget), `"boxes"`) || len(widget) > 100*(widgetTaskLimit+1024) {
+	if !strings.Contains(string(widget), `"view":"boxes"`) || len(widget) > 256 {
 		t.Fatalf("widget catalog missing or unbounded: %d bytes", len(widget))
 	}
 }
