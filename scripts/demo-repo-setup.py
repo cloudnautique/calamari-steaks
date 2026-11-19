@@ -284,7 +284,10 @@ def main():
                             break
                     print("Use the launch fields from the demo script. This link only controls the disposable fixture.", flush=True)
                     print(f"Change phase with {url}/fixture/<phase>; use Refresh setup in the widget.", flush=True)
-                    process.wait()
+                    try:
+                        process.wait()
+                    except KeyboardInterrupt:
+                        pass
                 else:
                     walk(MCP(process), fixture)
             finally:
