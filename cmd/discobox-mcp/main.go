@@ -59,7 +59,11 @@ func run() error {
 	probe := flag.Bool("connection-probe", false, "Internal: bounded connection test using JSON settings on stdin")
 	browserUI := flag.Bool("browser-ui", false, "Also serve the standalone browser workspace and setup page on the loopback listener, with private links printed to stderr")
 	legacyTools := flag.Bool("legacy-manager-tools", false, "Also serve the manager-named tool aliases (open_manager, send_manager, ...) and pre-0.12 view tools; on by default with --box or manager creation options")
+	forwardPort := flag.Int("mcp-forward-port", 0, "Also accept MCP requests addressed to 127.0.0.1 on this forwarded client port")
 	flag.Parse()
+	if *forwardPort < 0 || *forwardPort > 65535 {
+		return fmt.Errorf("invalid MCP forward port")
+	}
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if !explicit["browse"] && (*box != "" || *managerState != "" || *harness != "" || *pool != "") {
@@ -242,6 +246,9 @@ func run() error {
 	}
 	s.LegacyTools = *legacyTools
 	s.BrowserUI = *browserUI
+	if *forwardPort != 0 {
+		s.MCPForwardHost = fmt.Sprintf("127.0.0.1:%d", *forwardPort)
+	}
 	// A token supplied by file is already known to its owner. Never echo it:
 	// a declared workspace service's stderr becomes readable service logs.
 	shownToken := s.Token()

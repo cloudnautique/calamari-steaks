@@ -33,6 +33,7 @@ type Server struct {
 	generationMu     sync.Mutex
 	Onboarding       *connection.Controller
 	Origin           string
+	MCPForwardHost   string
 	// LegacyTools serves the manager-named tool aliases and pre-0.12 view
 	// tools for launchers configured against earlier versions.
 	LegacyTools bool
@@ -182,7 +183,7 @@ func (s *Server) Handler(mcpHandler http.Handler) http.Handler {
 	}
 	u, _ := url.Parse(s.Origin)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != u.Host {
+		if r.Host != u.Host && !(r.URL.Path == "/mcp" && s.MCPForwardHost != "" && r.Host == s.MCPForwardHost) {
 			http.Error(w, "unexpected host", http.StatusForbidden)
 			return
 		}
