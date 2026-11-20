@@ -2,8 +2,8 @@
 #---
 # id: discobox-mcp
 # name: Discobox MCP server
-# description: Runs this workspace's built MCP adapter on port 8080.
-# ports: 8080
+# description: Runs this workspace's built MCP adapter on port 8181.
+# ports: 8181
 # protocol: http
 #---
 set -eu
@@ -17,5 +17,6 @@ if [ ! -s .discobox-mcp/access-token ]; then
   exit 1
 fi
 exec ./bin/discobox-mcp --local --browse --transport http \
-  --listen 127.0.0.1:8080 \
+  --listen 127.0.0.1:8181 \
+  --mcp-forward-port 8081 --ui-origin http://127.0.0.1:8081 \
   --access-token-file .discobox-mcp/access-token --request-log
