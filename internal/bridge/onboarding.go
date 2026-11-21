@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const setupResourceURI = "ui://discobox/connection-v3.html"
+const setupResourceURI = "ui://discobox/connection-v4.html"
 
 func setupResult(value any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Connection setup updated. No backend authorization or box creation was performed."}}, Meta: mcp.Meta{"onboarding": value}}
@@ -243,7 +243,7 @@ func (s *Server) setupHTTP(mux *http.ServeMux) {
 	})))
 }
 
-var legacySetupResources = map[string]bool{"connection-v2.html": true, "connection-v1.html": true}
+var legacySetupResources = map[string]bool{"connection-v3.html": true, "connection-v2.html": true, "connection-v1.html": true}
 
 func setupResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	html, e := web.SetupHTML()

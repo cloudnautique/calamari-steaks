@@ -87,6 +87,13 @@ func validateManagerOptions(project string, options ManagerOptions) error {
 		return errors.New("invalid launch role")
 	}
 	if options.Source != nil {
+		if options.Role == "" {
+			// A role-less launch is the legacy manager, created with Discobox
+			// API access. Repository content must not get that access without
+			// the upstream approval flow, so sources launch only as a task box
+			// or a setup manager.
+			return errors.New("a repository source launches only as a task box (launch_box) or a setup manager; Discobox API access is granted through approval")
+		}
 		if err := options.Source.Validate(); err != nil {
 			return err
 		}
@@ -273,11 +280,19 @@ func ensureManager(ctx context.Context, c *Client, options ManagerOptions) (*Cli
 		if err != nil {
 			c.Session.Exec = ""
 		}
-		if needsTag && c.Session.Exec != "" {
+		if needsTag {
+			// The box ID is the receipt, so a tag that cannot be written yet
+			// (for example while the box awaits its source) does not fail the
+			// launch. It is reported instead; repeating the same requestId
+			// rechecks the role and writes the tag again.
 			tagCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			defer cancel()
-			_, _ = c.request(tagCtx, http.MethodPatch, "/projects/"+project+"/sandboxes/"+c.Session.Box+"/meta",
+			box, err := c.request(tagCtx, http.MethodPatch, "/projects/"+project+"/sandboxes/"+c.Session.Box+"/meta",
 				map[string]any{"setTags": map[string]string{managerTagKey: launchRole(options)}})
+			cancel()
+			if err != nil || roleOf(box) != launchRole(options) {
+				c.RoleTagPending = launchRole(options)
+				progress("Box " + c.Session.Box + " created; its discovery tag is not confirmed yet")
+			}
 		}
 		return c, nil
 	}

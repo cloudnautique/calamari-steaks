@@ -166,3 +166,73 @@ func TestAttentionUnavailableIsNotReportedAsEmptyCompleteInbox(t *testing.T) {
 		t.Fatalf("permission gap hidden: %+v %v", inbox, err)
 	}
 }
+
+// Regression: a repository launch never gets Discobox API access, and a role
+// tag that cannot be written yet is reported, then written by a replay of the
+// same requestId, instead of being dropped.
+func TestRepositoryLaunchReportsPendingTagAndNeverGetsAPI(t *testing.T) {
+	network := testhttp.NewNetwork(t)
+	creates, tagAllowed := 0, false
+	var box map[string]any
+	server := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api")
+		switch {
+		case r.Method == "GET" && path == "/projects/p/sandboxes":
+			json.NewEncoder(w).Encode(map[string]any{"sandboxes": []any{}})
+		case r.Method == "POST" && path == "/projects/p/sandboxes":
+			creates++
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["discoboxApi"] != false {
+				t.Error("repository launch received Discobox API access")
+			}
+			box = map[string]any{"id": "repo-a", "parentSandboxId": "caller", "config": body["config"], "runtime": map[string]any{"desiredState": "present", "state": "awaiting_source"}}
+			json.NewEncoder(w).Encode(box)
+		case path == "/projects/p/sandboxes/repo-a/meta":
+			if !tagAllowed {
+				http.Error(w, "sandbox is not running", http.StatusConflict)
+				return
+			}
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			box["meta"] = map[string]any{"tags": body["setTags"]}
+			json.NewEncoder(w).Encode(box)
+		case path == "/projects/p/sandboxes/repo-a":
+			json.NewEncoder(w).Encode(box)
+		case path == "/projects/p/sandboxes/repo-a/execs":
+			w.Write([]byte(`{"execs":[]}`))
+		default:
+			t.Errorf("unexpected operation %s %s", r.Method, path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, _ := NewCatalog(server.URL, "", "p")
+	source := &RepositorySource{Repository: "acme/app", Branch: "main", Commit: strings.Repeat("a", 40)}
+	options := ManagerOptions{Parent: "caller", StatePath: filepath.Join(t.TempDir(), "state.json"), Role: "box", Task: "Set up.", Source: source}
+
+	legacy := options
+	legacy.Role = ""
+	if _, err := client.CreateManager(context.Background(), "legacy-source", legacy); err == nil {
+		t.Fatal("role-less (API-enabled) launch accepted a repository source")
+	}
+	if creates != 0 {
+		t.Fatal("refused source launch created a box")
+	}
+
+	first, err := client.CreateManager(context.Background(), "repo-task", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Session.Box != "repo-a" || first.RoleTagPending != "box" {
+		t.Fatalf("unconfirmed tag not reported: box %q pending %q", first.Session.Box, first.RoleTagPending)
+	}
+	tagAllowed = true
+	second, err := client.CreateManager(context.Background(), "repo-task", options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creates != 1 || second.Session.Box != "repo-a" || second.RoleTagPending != "" || roleOf(box) != "box" {
+		t.Fatalf("replay did not write the tag: creates %d pending %q role %q", creates, second.RoleTagPending, roleOf(box))
+	}
+}

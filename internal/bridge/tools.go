@@ -10,7 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const uiResource = "ui://discobox/workspace-v17.html"
+const uiResource = "ui://discobox/workspace-v18.html"
 
 type empty struct{}
 type readInput struct {
@@ -40,7 +40,7 @@ const instructions = `Discobox boxes are isolated sandboxes, each running an age
 
 // legacyUIResources were published by earlier versions. Restored
 // conversations can still read them; they are not listed.
-var legacyUIResources = map[string]bool{"workspace-v16.html": true, "workspace-v15.html": true, "workspace-v14.html": true, "workspace-v13.html": true, "workspace-v12.html": true, "workspace-v11.html": true, "workspace-v10.html": true, "workspace-v9.html": true, "workspace-v8.html": true, "workspace-v7.html": true, "workspace-v6.html": true, "workspace-v5.html": true, "workspace-v4.html": true, "managers-v3.html": true, "manager-v2.html": true, "manager.html": true}
+var legacyUIResources = map[string]bool{"workspace-v17.html": true, "workspace-v16.html": true, "workspace-v15.html": true, "workspace-v14.html": true, "workspace-v13.html": true, "workspace-v12.html": true, "workspace-v11.html": true, "workspace-v10.html": true, "workspace-v9.html": true, "workspace-v8.html": true, "workspace-v7.html": true, "workspace-v6.html": true, "workspace-v5.html": true, "workspace-v4.html": true, "managers-v3.html": true, "manager-v2.html": true, "manager.html": true}
 
 func workspaceResource(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	html, err := web.HTML()

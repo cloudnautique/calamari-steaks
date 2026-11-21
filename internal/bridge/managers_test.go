@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -260,5 +261,52 @@ func TestManagerWorkspaceLifecycleAndScopedChat(t *testing.T) {
 	}
 	if catalog.Session.Box != "" {
 		t.Fatal("catalog acquired a mutable global selection")
+	}
+}
+
+// Regression: list_attention once reused the widget's 12-item inbox, so the
+// model never saw the request IDs of later items and could not open them.
+func TestListAttentionReturnsRequestsBeyondWidgetInbox(t *testing.T) {
+	network := testhttp.NewNetwork(t)
+	const pending = 20
+	backend := network.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api")
+		switch path {
+		case "/projects/p/sandboxes":
+			w.Write([]byte(`{"sandboxes":[{"id":"owned","parentSandboxId":"caller","config":{"name":"owned"},"meta":{"tags":{"discobox-mcp-role":"box"}},"runtime":{"desiredState":"present","runtimeState":"running"}}]}`))
+		case "/projects/p/secret-requests":
+			requests := []any{}
+			for i := range pending {
+				requests = append(requests, map[string]any{"id": fmt.Sprintf("req-%02d", i), "sandboxId": "owned", "status": "pending", "name": "GitHub"})
+			}
+			json.NewEncoder(w).Encode(map[string]any{"secretRequests": requests})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+	catalog, err := discobox.NewCatalog(backend.URL, "", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(catalog, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{Parent: "caller", StatePath: filepath.Join(t.TempDir(), "startup.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := mcpClient(t, ctx, s)
+	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "list_attention", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatal(err, result)
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	for i := range pending {
+		if id := fmt.Sprintf("req-%02d", i); !strings.Contains(text, "[request "+id+"]") {
+			t.Fatalf("list_attention omitted %s:\n%s", id, text)
+		}
+	}
+	if items := toolData(result)["items"].([]any); len(items) != pending {
+		t.Fatalf("structured items: %d, want %d", len(items), pending)
 	}
 }

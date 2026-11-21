@@ -745,7 +745,7 @@ async function refreshInbox() {
       byId('box-state').textContent = describeBox(current);
     }
     byId('attention-count').textContent = inbox.total ?? inbox.items.length;
-    const showing = inbox.total > inbox.items.length ? ` Showing ${inbox.items.length} of ${inbox.total}.` : '';
+    const showing = inbox.total > inbox.items.length ? ` Showing ${inbox.items.length} of ${inbox.total}; Requests & history lists every pending credential request, and the box list highlights boxes that need you.` : '';
     byId('inbox-coverage').textContent = `${inbox.coverage}.${showing} Updated ${new Date().toLocaleTimeString()}. ${inbox.warning || ''}`;
     byId('inbox-items').replaceChildren();
     if (!inbox.items.length) { const p = document.createElement('p'); p.textContent = 'No attention items within this connection’s coverage.'; byId('inbox-items').append(p); }
