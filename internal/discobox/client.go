@@ -41,6 +41,9 @@ type Client struct {
 	http     *http.Client
 	token    string
 	Session  Session
+	// RoleTagPending names the discovery role a launch could not confirm on
+	// its box. Empty when the tag was written or was not needed.
+	RoleTagPending string
 }
 
 func New(endpoint, token string, session Session) (*Client, error) {

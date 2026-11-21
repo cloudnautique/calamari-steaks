@@ -185,6 +185,9 @@ func launchReceipt(data map[string]any, input createInput) string {
 			text.WriteString("The manager is asked to request worker-management API access from inside the box. Use setup_status to check the request and verified grant state.\n")
 		}
 	}
+	if role, ok := data["roleTagPending"].(string); ok {
+		fmt.Fprintf(&text, "Its %s discovery tag is not confirmed yet, so it may list as an untagged box. Repeat launch_box with the same requestId and settings once it is running to write the tag; nothing is created again.\n", role)
+	}
 	fmt.Fprintf(&text, "Continue with setup_status and open_box on boxId %s.", id)
 	return text.String()
 }

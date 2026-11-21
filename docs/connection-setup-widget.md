@@ -87,7 +87,7 @@ can wait for the backend; the MCPB and ordinary default startup use browse mode.
 
 Text-only clients can read the instructions/public ID, test the active target,
 and set launcher settings or edit the documented profile, then restart. The widget
-is served as `ui://discobox/connection-v3.html` (v1 and v2 remain readable) and uses only the MCP Apps bridge.
+is served as `ui://discobox/connection-v4.html` (v1 to v3 remain readable) and uses only the MCP Apps bridge.
 No browser fetch of a socket or Iroh connection is attempted. Direct connection
 probes run in short-lived subprocesses, keeping global Iroh transport configuration
 isolated from live sessions. No failed probe, input, or enrollment is retried.

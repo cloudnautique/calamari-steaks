@@ -198,6 +198,9 @@ func (s *Server) launch(ctx context.Context, input createInput, role string) (ma
 			data["requestedSetup"] = input.Setup
 			data["requestedRole"] = "manager"
 		}
+		if client.RoleTagPending != "" {
+			data["roleTagPending"] = client.RoleTagPending
+		}
 		observationCtx, stop := context.WithTimeout(ctx, 3*time.Second)
 		defer stop()
 		if observation, err := client.ObserveSetup(observationCtx, id, options.Parent, false); err == nil {
@@ -417,6 +420,10 @@ func (s *Server) workspaceHTTP(w http.ResponseWriter, r *http.Request) {
 
 const widgetTaskLimit = 240
 
+// attentionListLimit caps list_attention. Keep it well above the widget's
+// inbox cap: an item left out has no request ID the model can open.
+const attentionListLimit = 50
+
 func widgetCatalog(inbox discobox.Inbox, input catalogReadInput, project string) map[string]any {
 	const pageSize = 20
 	boxes := []discobox.Manager{}
@@ -543,8 +550,9 @@ func (s *Server) boxTools(server *mcp.Server) {
 		if err != nil {
 			return nil, nil, err
 		}
-		compact := widgetCatalog(inbox, catalogReadInput{}, s.backend().Session.Project)
-		items := compact["inbox"].(map[string]any)["items"].([]discobox.Attention)
+		// The widget keeps a short inbox, but the model needs every request ID
+		// it may pass to open_approval, so this list has its own, larger cap.
+		items := inbox.Items[:min(attentionListLimit, len(inbox.Items))]
 		var text strings.Builder
 		fmt.Fprintf(&text, "%d item(s) need attention. Coverage: %s.", len(inbox.Items), inbox.Coverage)
 		if inbox.Warning != "" {

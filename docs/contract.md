@@ -88,9 +88,9 @@ they may still log the traffic.
 
 ## Resources
 
-- Listed: `ui://discobox/workspace-v17.html`, `ui://discobox/connection-v3.html`.
+- Listed: `ui://discobox/workspace-v18.html`, `ui://discobox/connection-v4.html`.
 - Template `ui://discobox/{bundle}` serves earlier bundle names
-  (`workspace-v4`…`v16`, `manager*.html`, `connection-v1/v2`) for restored
+  (`workspace-v4`…`v17`, `manager*.html`, `connection-v1`…`v3`) for restored
   conversations; unknown names are not found.
 - Template `discobox-file://{project}/{boxId}/{+path}`: files up to 1 MiB.
 

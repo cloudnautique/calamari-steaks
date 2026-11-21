@@ -104,3 +104,34 @@ func TestTerminalGatedWithNoBackend(t *testing.T) {
 		t.Fatalf("terminal with no backend: status %d %q", recorder.Code, recorder.Body.String())
 	}
 }
+
+// The setup-status and pool-health routes read the backend client, so with
+// no backend they must refuse rather than dereference nil.
+func TestSetupStatusAndHealthGatedWithNoBackend(t *testing.T) {
+	s, e := New(nil, "http://127.0.0.1:8080", nil, "", discobox.ManagerOptions{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/api/managers/setup-status", strings.NewReader(`{"boxId":"box-a"}`))
+	request.Header.Set("Origin", "http://127.0.0.1:8080")
+	recorder := httptest.NewRecorder()
+	s.Handler(nil).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("setup-status with no backend: status %d %q", recorder.Code, recorder.Body.String())
+	}
+	// /api/connection/ stays reachable for setup, so health checks itself.
+	if _, err := s.backendHealth(context.Background()); err == nil {
+		t.Fatal("pool health with no backend did not refuse")
+	}
+	ctx := context.Background()
+	client := mcpClient(t, ctx, s)
+	for name, args := range map[string]map[string]any{"setup_status": {"boxId": "box-a"}, "get_backend_health": {}} {
+		result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil || !result.IsError {
+			t.Fatalf("%s with no backend was not gated: %v %+v", name, err, result)
+		}
+		if text, _ := json.Marshal(result.Content); !strings.Contains(strings.ToLower(string(text)), "connect") && !strings.Contains(strings.ToLower(string(text)), "setup") {
+			t.Fatalf("%s refused for an unexpected reason: %s", name, text)
+		}
+	}
+}

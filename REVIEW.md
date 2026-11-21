@@ -28,9 +28,22 @@ Checks for later reviews of this repository, left by earlier reviews and fixes.
   setup widget read-only and it cannot repair a profile that fails validation.
 - Bump `uiResource` in `internal/bridge/tools.go` whenever the bundled widget
   (`web/`) changes, and keep every previously published URI as an alias, so
-  hosts drop a cached widget without breaking restored sessions. Update the
-  docs that name the current resource (`docs/connection.md`,
-  `docs/managers.md`) in the same change.
+  hosts drop a cached widget without breaking restored sessions. The setup
+  widget (`web/onboarding.*`) follows the same rule with `setupResourceURI` in
+  `internal/bridge/onboarding.go`. Only `docs/contract.md` and
+  `docs/connection-setup-widget.md` name the current versions; update them in
+  the same change, and point other docs at `docs/contract.md`.
+- Never give a repository source to a role-less launch
+  (`validateManagerOptions` in `internal/discobox/manager.go`). Role "" is the
+  legacy manager, created with `discoboxApi: true`, so repository content would
+  get worker-management API access without the upstream approval flow.
+- Keep `list_attention` on its own cap (`attentionListLimit`), not the widget's
+  short inbox. An attention item the model is not shown has no request ID it
+  can pass to `open_approval`.
+- A repository launch returns its box ID even when the role tag cannot be
+  written yet (the box may still await its source). Report that as
+  `RoleTagPending` in the receipt instead of discarding the error; a replay of
+  the same requestId rechecks and writes the tag.
 - Keep desktop input ownership enforced in the bridge
   (`internal/bridge/desktop_rfb.go`), not only by the widget's noVNC view-only
   mode: a caller that bypasses the widget otherwise types into a desktop
